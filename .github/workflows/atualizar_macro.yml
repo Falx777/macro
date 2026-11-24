@@ -1,0 +1,33 @@
+name: Atualizar Dados Macroeconômicos
+
+on:
+  schedule:
+    - cron: "0 12 * * 1-5" # Dias úteis às 09:00 BRT (12:00 UTC)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-macro:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar dependências
+        run: pip install -r requirements.txt
+
+      - name: Coletar séries e gerar JSON
+        run: python src/exportar_macro.py
+
+      - name: Commitar macro_dados.json
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add docs/dados/macro_dados.json
+          git commit -m "Atualiza macro_dados.json" || exit 0
+          git push
