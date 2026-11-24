@@ -109,7 +109,7 @@ def ipea_series(codigo, nome, start=START):
 
 
 def to_iso_list(series_dt):
-    return pd.to_datetime(series_dt).dt.strftime("%Y-%m-%d").tolist()
+    return pd.DatetimeIndex(pd.to_datetime(series_dt)).strftime("%Y-%m-%d").tolist()
 
 
 def to_num_list(series_num):
