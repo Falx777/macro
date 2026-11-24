@@ -142,7 +142,95 @@ function faixaMandatos(cfg, xMin, xMax) {
   return { shapes, images, annotations };
 }
 
-function renderizarTodos(modo) {
+function tracosColunaAgrupada(datas, seriesObj) {
+  return Object.entries(seriesObj || {}).map(([nome, valores]) => ({
+    x: datas,
+    y: valores,
+    name: nome,
+    type: "bar",
+    opacity: 0.85,
+  }));
+}
+
+function plotarColunaPib(divId, titulo, yTitulo, datas, seriesObj, zeroline = true) {
+  if (!document.getElementById(divId)) return;
+  Plotly.newPlot(
+    divId,
+    tracosColunaAgrupada(datas, seriesObj),
+    {
+      title: titulo,
+      yaxis: { title: yTitulo, zeroline: zeroline },
+      barmode: "group",
+      hovermode: "x unified",
+    },
+    { responsive: true }
+  );
+}
+
+function renderizarPibColunas(pib) {
+  if (!pib) return;
+
+  plotarColunaPib(
+    "g-pib-qoq-prod",
+    "PIB — ótica da produção: variação trimestral",
+    "Variação percentual (%)",
+    pib.qoq_datas,
+    pib.qoq_producao
+  );
+  plotarColunaPib(
+    "g-pib-qoq-desp",
+    "PIB — ótica da despesas: variação trimestral",
+    "Variação percentual (%)",
+    pib.qoq_datas,
+    pib.qoq_despesas
+  );
+  plotarColunaPib(
+    "g-pib-yoy-prod",
+    "PIB — ótica da produção: variação em 4 trimestres",
+    "Variação percentual (%)",
+    pib.yoy_datas,
+    pib.yoy_producao
+  );
+  plotarColunaPib(
+    "g-pib-yoy-desp",
+    "PIB — ótica da despesas: variação em 4 trimestres",
+    "Variação percentual (%)",
+    pib.yoy_datas,
+    pib.yoy_despesas
+  );
+  plotarColunaPib(
+    "g-pib-yoy4-prod",
+    "PIB — ótica da produção: últimos quatro trimestres (var. 4 tri)",
+    "Variação percentual (%)",
+    pib.yoy_recent_datas,
+    pib.yoy_recent_producao
+  );
+  plotarColunaPib(
+    "g-pib-yoy4-desp",
+    "PIB — ótica da despesas: últimos quatro trimestres (var. 4 tri)",
+    "Variação percentual (%)",
+    pib.yoy_recent_datas,
+    pib.yoy_recent_despesas
+  );
+  plotarColunaPib(
+    "g-pib-part4-prod",
+    "PIB — participação da produção (últimos quatro trimestres)",
+    "% do VAB",
+    pib.part_recent_prod_datas,
+    pib.part_recent_producao,
+    false
+  );
+  plotarColunaPib(
+    "g-pib-part4-desp",
+    "PIB — participação da despesas (últimos quatro trimestres)",
+    "% do PIB",
+    pib.part_recent_desp_datas,
+    pib.part_recent_despesas,
+    false
+  );
+}
+
+function renderizarTodos(modo = "linha") {
   if (!DADOS_CACHE) return;
   const d = DADOS_CACHE;
   const cfg = d.config;
@@ -270,106 +358,16 @@ function renderizarTodos(modo) {
     },
     { responsive: true }
   );
-  renderizarPibColunas(d.pib)
+
+  // 5. Gráficos trimestrais do PIB (SIDRA 1621 e 6613) em coluna
+  renderizarPibColunas(d.pib);
 }
 
 async function iniciar() {
   const resp = await fetch(`dados/macro_dados.json?v=${Date.now()}`);
   DADOS_CACHE = await resp.json();
   document.getElementById("atualizacao").textContent = DADOS_CACHE.gerado_em_utc;
-  renderizarTodos(document.getElementById("modo-global").value);
+  renderizarTodos("linha");
 }
 
-const modoGlobalEl = document.getElementById("modo-global");
-if (modoGlobalEl) {
-  modoGlobalEl.addEventListener("change", (e) => {
-    renderizarTodos(e.target.value);
-  });
-}
-function tracosColunaAgrupada(datas, seriesObj) {
-  return Object.entries(seriesObj).map(([nome, valores]) => ({
-    x: datas,
-    y: valores,
-    name: nome,
-    type: "bar",
-    opacity: 0.85,
-  }));
-}
-
-function plotarColunaPib(divId, titulo, yTitulo, datas, seriesObj, zeroline = true) {
-  Plotly.newPlot(
-    divId,
-    tracosColunaAgrupada(datas, seriesObj),
-    {
-      title: titulo,
-      yaxis: { title: yTitulo, zeroline: zeroline },
-      barmode: "group",
-      hovermode: "x unified",
-    },
-    { responsive: true }
-  );
-}
-
-function renderizarPibColunas(pib) {
-  if (!pib) return;
-
-  plotarColunaPib(
-    "g-pib-qoq-prod",
-    "PIB — ótica da produção: variação trimestral",
-    "Variação percentual (%)",
-    pib.qoq_datas,
-    pib.qoq_producao
-  );
-  plotarColunaPib(
-    "g-pib-qoq-desp",
-    "PIB — ótica da despesas: variação trimestral",
-    "Variação percentual (%)",
-    pib.qoq_datas,
-    pib.qoq_despesas
-  );
-  plotarColunaPib(
-    "g-pib-yoy-prod",
-    "PIB — ótica da produção: variação em 4 trimestres",
-    "Variação percentual (%)",
-    pib.yoy_datas,
-    pib.yoy_producao
-  );
-  plotarColunaPib(
-    "g-pib-yoy-desp",
-    "PIB — ótica da despesas: variação em 4 trimestres",
-    "Variação percentual (%)",
-    pib.yoy_datas,
-    pib.yoy_despesas
-  );
-  plotarColunaPib(
-    "g-pib-yoy4-prod",
-    "PIB — ótica da produção: últimos quatro trimestres (var. 4 tri)",
-    "Variação percentual (%)",
-    pib.yoy_recent_datas,
-    pib.yoy_recent_producao
-  );
-  plotarColunaPib(
-    "g-pib-yoy4-desp",
-    "PIB — ótica da despesas: últimos quatro trimestres (var. 4 tri)",
-    "Variação percentual (%)",
-    pib.yoy_recent_datas,
-    pib.yoy_recent_despesas
-  );
-  plotarColunaPib(
-    "g-pib-part4-prod",
-    "PIB — participação da produção (últimos quatro trimestres)",
-    "% do VAB",
-    pib.part_recent_prod_datas,
-    pib.part_recent_producao,
-    false
-  );
-  plotarColunaPib(
-    "g-pib-part4-desp",
-    "PIB — participação da despesas (últimos quatro trimestres)",
-    "% do PIB",
-    pib.part_recent_desp_datas,
-    pib.part_recent_despesas,
-    false
-  );
-}
 iniciar();
