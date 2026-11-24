@@ -1,5 +1,10 @@
 let DADOS_CACHE = null;
-
+const modoGlobalEl = document.getElementById("modo-global");
+if (modoGlobalEl) {
+  modoGlobalEl.addEventListener("change", (e) => {
+    renderizarTodos(e.target.value);
+  });
+}
 function tracoSerie(x, y, nome, cor, modo) {
   if (modo === "coluna") {
     return {
