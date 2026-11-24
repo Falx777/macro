@@ -62,6 +62,8 @@ IPCA_SGS = {
 SESSION = requests.Session()
 SESSION.headers.update({"User-Agent": "macro-github-pages/1.0"})
 
+import time
+
 
 def sgs_series(codigo, nome, start=START):
     url = f"https://api.bcb.gov.br/dados/serie/bcdata.sgs.{codigo}/dados"
@@ -75,12 +77,23 @@ def sgs_series(codigo, nome, start=START):
             "dataInicial": cursor.strftime("%d/%m/%Y"),
             "dataFinal": end.strftime("%d/%m/%Y"),
         }
-        r = SESSION.get(url, params=params, timeout=60)
-        r.raise_for_status()
+        for tentativa in range(4):
+            try:
+                r = SESSION.get(url, params=params, timeout=60)
+                if r.status_code in (429, 502, 503, 504):
+                    time.sleep(2 ** tentativa)
+                    continue
+                r.raise_for_status()
+                break
+            except requests.RequestException:
+                if tentativa == 3:
+                    raise
+                time.sleep(2 ** tentativa)
         chunk = r.json()
         if isinstance(chunk, list):
             data.extend(chunk)
         cursor = end + pd.Timedelta(days=1)
+        time.sleep(0.3)
     df = pd.DataFrame(data)
     if df.empty:
         return pd.DataFrame(columns=["data", "valor", "codigo", "serie"])
