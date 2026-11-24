@@ -1,10 +1,5 @@
 let DADOS_CACHE = null;
-const modoGlobalEl = document.getElementById("modo-global");
-if (modoGlobalEl) {
-  modoGlobalEl.addEventListener("change", (e) => {
-    renderizarTodos(e.target.value);
-  });
-}
+
 function tracoSerie(x, y, nome, cor, modo) {
   if (modo === "coluna") {
     return {
@@ -285,9 +280,12 @@ async function iniciar() {
   renderizarTodos(document.getElementById("modo-global").value);
 }
 
-document.getElementById("modo-global").addEventListener("change", (e) => {
-  renderizarTodos(e.target.value);
-});
+const modoGlobalEl = document.getElementById("modo-global");
+if (modoGlobalEl) {
+  modoGlobalEl.addEventListener("change", (e) => {
+    renderizarTodos(e.target.value);
+  });
+}
 function tracosColunaAgrupada(datas, seriesObj) {
   return Object.entries(seriesObj).map(([nome, valores]) => ({
     x: datas,
