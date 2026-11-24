@@ -77,23 +77,33 @@ def sgs_series(codigo, nome, start=START):
             "dataInicial": cursor.strftime("%d/%m/%Y"),
             "dataFinal": end.strftime("%d/%m/%Y"),
         }
-        for tentativa in range(4):
+        chunk = None
+        for tentativa in range(5):
             try:
                 r = SESSION.get(url, params=params, timeout=60)
                 if r.status_code in (429, 502, 503, 504):
                     time.sleep(2 ** tentativa)
                     continue
                 r.raise_for_status()
+                if not r.text or not r.text.strip():
+                    time.sleep(2 ** tentativa)
+                    continue
+                parsed = r.json()
+                if not isinstance(parsed, list):
+                    time.sleep(2 ** tentativa)
+                    continue
+                chunk = parsed
                 break
-            except requests.RequestException:
-                if tentativa == 3:
-                    raise
+            except (requests.RequestException, ValueError) as exc:
+                if tentativa == 4:
+                    raise RuntimeError(
+                        f"Falha ao obter/decodificar SGS {codigo} ({cursor:%Y-%m-%d} a {end:%Y-%m-%d}): {r.text[:200] if 'r' in locals() else ''}"
+                    ) from exc
                 time.sleep(2 ** tentativa)
-        chunk = r.json()
-        if isinstance(chunk, list):
+        if chunk:
             data.extend(chunk)
         cursor = end + pd.Timedelta(days=1)
-        time.sleep(0.3)
+        time.sleep(0.35)
     df = pd.DataFrame(data)
     if df.empty:
         return pd.DataFrame(columns=["data", "valor", "codigo", "serie"])
