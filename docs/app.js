@@ -270,6 +270,7 @@ function renderizarTodos(modo) {
     },
     { responsive: true }
   );
+  renderizarPibColunas(d.pib)
 }
 
 async function iniciar() {
