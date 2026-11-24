@@ -1,5 +1,6 @@
 import base64
 import json
+import time
 from pathlib import Path
 import numpy as np
 import pandas as pd
@@ -59,10 +60,26 @@ IPCA_SGS = {
     1643: "Educação",
 }
 
+PRODUCAO = {
+    "90687": "Agropecuária - total",
+    "90691": "Indústria - total",
+    "90696": "Serviços - total",
+    "90705": "Valor adicionado a preços básicos",
+}
+
+DESPESAS = {
+    "93404": "Despesa de consumo das famílias",
+    "93405": "Despesa de consumo da administração pública",
+    "93406": "Formação bruta de capital fixo",
+    "93407": "Exportação de bens e serviços",
+    "93408": "Importação de bens e serviços (-)",
+    "90707": "PIB a preços de mercado",
+}
+
+ALL_CATS = list(PRODUCAO) + list(DESPESAS)
+
 SESSION = requests.Session()
 SESSION.headers.update({"User-Agent": "macro-github-pages/1.0"})
-
-import time
 
 
 def sgs_series(codigo, nome, start=START):
@@ -131,12 +148,64 @@ def ipea_series(codigo, nome, start=START):
     return df
 
 
+def parse_quarter(code):
+    s = str(code).strip()
+    return pd.Period(year=int(s[:4]), quarter=int(s[-2:]), freq="Q")
+
+
+def sidra_series(table, variable, categories, start_year=2016):
+    desc_url = f"https://apisidra.ibge.gov.br/DescritoresTabela/t/{table}"
+    r_desc = SESSION.get(desc_url, timeout=60)
+    r_desc.raise_for_status()
+    desc = r_desc.json()
+    class_id = desc["Classificacoes"][0]["Id"]
+
+    url = f"https://apisidra.ibge.gov.br/values/t/{table}/n1/1/v/{variable}/p/all/c{class_id}/all"
+    for tentativa in range(5):
+        try:
+            r = SESSION.get(url, timeout=120)
+            if r.status_code in (429, 502, 503, 504):
+                time.sleep(2 ** tentativa)
+                continue
+            r.raise_for_status()
+            raw = r.json()
+            break
+        except (requests.RequestException, ValueError) as exc:
+            if tentativa == 4:
+                raise RuntimeError(f"Falha ao consultar SIDRA tabela {table}, variável {variable}") from exc
+            time.sleep(2 ** tentativa)
+
+    df = pd.DataFrame(raw[1:])
+    df = df.rename(
+        columns={
+            "D3C": "periodo_codigo",
+            "D4C": "categoria_codigo",
+            "D4N": "categoria",
+            "V": "valor",
+        }
+    )
+    df["valor"] = pd.to_numeric(df["valor"].replace("..", np.nan), errors="coerce")
+    df["trimestre"] = df["periodo_codigo"].map(parse_quarter)
+    df["data"] = df["trimestre"].dt.start_time
+    df = df[df["trimestre"].dt.year >= start_year].copy()
+    wanted = {str(k) for k in categories}
+    df = df[df["categoria_codigo"].astype(str).isin(wanted)].copy()
+    return df.sort_values(["categoria", "trimestre"])
+
+
 def to_iso_list(series_dt):
     return pd.DatetimeIndex(pd.to_datetime(series_dt)).strftime("%Y-%m-%d").tolist()
 
 
 def to_num_list(series_num):
     return [None if pd.isna(v) else round(float(v), 4) for v in series_num]
+
+
+def df_to_series_dict(df_wide):
+    return {
+        col: to_num_list(df_wide[col])
+        for col in df_wide.columns
+    }
 
 
 def carregar_fotos_b64():
@@ -229,7 +298,7 @@ def main():
     ex_selic_cons = ex_selic.groupby(["Data", "DataReferencia"], as_index=False).agg(
         Media=("Media", "median"), Mediana=("Mediana", "median")
     )
-    latest_selic_date = ex_selic_cons["Data"].max()
+    latest_selic_date = ex_selic_cons.Data.max()
     ex_selic_lat = ex_selic_cons[ex_selic_cons["Data"] == latest_selic_date].copy()
     anos_ref = pd.to_numeric(ex_selic_lat["DataReferencia"], errors="coerce")
     anos_futuros = anos_ref[anos_ref >= latest_selic_date.year]
@@ -280,6 +349,61 @@ def main():
             "datas": to_iso_list(des["data"]),
             "valores": to_num_list(des["valor"]),
         },
+    }
+
+    # 5. PIB SIDRA 1621 (índice encadeado) e 6613 (valores encadeados)
+    gdp1621 = sidra_series(1621, 584, ALL_CATS, start_year=2016)
+    gdp6613 = sidra_series(6613, 9319, ALL_CATS, start_year=2016)
+
+    idx = gdp1621.pivot_table(index="trimestre", columns="categoria", values="valor", aggfunc="last").sort_index()
+    qoq = (idx.pct_change() * 100).dropna(how="all")
+    yoy = ((idx / idx.shift(4) - 1) * 100).dropna(how="all")
+
+    last_q = yoy.index.max()
+    yoy_recent = yoy[yoy.index >= last_q - 3]
+
+    val = gdp6613.pivot_table(index="trimestre", columns="categoria", values="valor", aggfunc="last").sort_index()
+    roll4 = val.rolling(4, min_periods=4).sum()
+
+    shares_prod = pd.DataFrame(index=roll4.index)
+    for name in PRODUCAO.values():
+        if (
+            name != "Valor adicionado a preços básicos"
+            and name in roll4
+            and "Valor adicionado a preços básicos" in roll4
+        ):
+            shares_prod[name] = 100 * roll4[name] / roll4["Valor adicionado a preços básicos"]
+    shares_prod = shares_prod.dropna(how="all")
+    shares_prod_recent = shares_prod[shares_prod.index >= shares_prod.index.max() - 3]
+
+    shares_desp = pd.DataFrame(index=roll4.index)
+    for name in DESPESAS.values():
+        if (
+            name != "PIB a preços de mercado"
+            and name in roll4
+            and "PIB a preços de mercado" in roll4
+        ):
+            shares_desp[name] = 100 * roll4[name] / roll4["PIB a preços de mercado"]
+    shares_desp = shares_desp.dropna(how="all")
+    shares_desp_recent = shares_desp[shares_desp.index >= shares_desp.index.max() - 3]
+
+    prod_cols = [c for c in PRODUCAO.values() if c in idx.columns]
+    desp_cols = [c for c in DESPESAS.values() if c in idx.columns]
+
+    payload["pib"] = {
+        "qoq_datas": pd.DatetimeIndex(qoq.index.to_timestamp()).strftime("%Y-%m-%d").tolist(),
+        "qoq_producao": df_to_series_dict(qoq[prod_cols]),
+        "qoq_despesas": df_to_series_dict(qoq[desp_cols]),
+        "yoy_datas": pd.DatetimeIndex(yoy.index.to_timestamp()).strftime("%Y-%m-%d").tolist(),
+        "yoy_producao": df_to_series_dict(yoy[prod_cols]),
+        "yoy_despesas": df_to_series_dict(yoy[desp_cols]),
+        "yoy_recent_datas": pd.DatetimeIndex(yoy_recent.index.to_timestamp()).strftime("%Y-%m-%d").tolist(),
+        "yoy_recent_producao": df_to_series_dict(yoy_recent[prod_cols]),
+        "yoy_recent_despesas": df_to_series_dict(yoy_recent[desp_cols]),
+        "part_recent_prod_datas": pd.DatetimeIndex(shares_prod_recent.index.to_timestamp()).strftime("%Y-%m-%d").tolist(),
+        "part_recent_producao": df_to_series_dict(shares_prod_recent),
+        "part_recent_desp_datas": pd.DatetimeIndex(shares_desp_recent.index.to_timestamp()).strftime("%Y-%m-%d").tolist(),
+        "part_recent_despesas": df_to_series_dict(shares_desp_recent),
     }
 
     out_file = Path("docs/dados/macro_dados.json")
