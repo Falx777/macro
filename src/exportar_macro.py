@@ -398,22 +398,17 @@ def main():
         },
     }
 
-    # 5. PIB trimestral:
-    # - Crescimento real contra trimestre anterior (t / t-1): índice encadeado dessazonalizado (SIDRA 1621, var 584)
-    # - Crescimento real acumulado em 4 trimestres (últimos 4 tri vs 4 tri anteriores): índice encadeado sem ajuste sazonal (SIDRA 1620, var 583)
-    # - Participação: valores encadeados (SIDRA 6613, var 9319) sobre soma móvel de 4 trimestres
-    gdp1621_sa = sidra_series(1621, 584, ALL_CATS, start_year=2015)
-    gdp1620_nsa = sidra_series(1620, 583, ALL_CATS, start_year=2014)
+    # 5. PIB trimestral oficial (SIDRA 5932: var 6561 trimestral dessazonalizada; var 6562 acumulada 4 tri)
+    # e participação sobre valores encadeados (SIDRA 6613, var 9319)
+    gdp5932_qoq = sidra_series(5932, 6561, ALL_CATS, start_year=2016)
+    gdp5932_4q = sidra_series(5932, 6562, ALL_CATS, start_year=2016)
     gdp6613 = sidra_series(6613, 9319, ALL_CATS, start_year=2015)
 
-    idx_sa = gdp1621_sa.pivot_table(index="trimestre", columns="categoria", values="valor", aggfunc="last").sort_index()
-    qoq = (idx_sa.pct_change() * 100).dropna(how="all")
-    qoq = qoq[qoq.index.year >= 2016]
+    qoq = gdp5932_qoq.pivot_table(index="trimestre", columns="categoria", values="valor", aggfunc="last").sort_index()
+    qoq = qoq.dropna(how="all")
 
-    idx_nsa = gdp1620_nsa.pivot_table(index="trimestre", columns="categoria", values="valor", aggfunc="last").sort_index()
-    roll4_nsa = idx_nsa.rolling(4, min_periods=4).sum()
-    yoy = (roll4_nsa.pct_change(4) * 100).dropna(how="all")
-    yoy = yoy[yoy.index.year >= 2016]
+    yoy = gdp5932_4q.pivot_table(index="trimestre", columns="categoria", values="valor", aggfunc="last").sort_index()
+    yoy = yoy.dropna(how="all")
 
     last_q = yoy.index.max()
     yoy_recent = yoy[yoy.index >= last_q - 3]
@@ -443,21 +438,21 @@ def main():
     shares_desp = shares_desp.dropna(how="all")
     shares_desp_recent = shares_desp[shares_desp.index >= shares_desp.index.max() - 3]
 
-    prod_cols_sa = [c for c in PRODUCAO.values() if c in qoq.columns]
-    desp_cols_sa = [c for c in DESPESAS.values() if c in qoq.columns]
-    prod_cols_nsa = [c for c in PRODUCAO.values() if c in yoy.columns]
-    desp_cols_nsa = [c for c in DESPESAS.values() if c in yoy.columns]
+    prod_cols_qoq = [c for c in PRODUCAO.values() if c in qoq.columns]
+    desp_cols_qoq = [c for c in DESPESAS.values() if c in qoq.columns]
+    prod_cols_4q = [c for c in PRODUCAO.values() if c in yoy.columns]
+    desp_cols_4q = [c for c in DESPESAS.values() if c in yoy.columns]
 
     payload["pib"] = {
         "qoq_datas": pd.DatetimeIndex(qoq.index.to_timestamp()).strftime("%Y-%m-%d").tolist(),
-        "qoq_producao": df_to_series_dict(qoq[prod_cols_sa]),
-        "qoq_despesas": df_to_series_dict(qoq[desp_cols_sa]),
+        "qoq_producao": df_to_series_dict(qoq[prod_cols_qoq]),
+        "qoq_despesas": df_to_series_dict(qoq[desp_cols_qoq]),
         "yoy_datas": pd.DatetimeIndex(yoy.index.to_timestamp()).strftime("%Y-%m-%d").tolist(),
-        "yoy_producao": df_to_series_dict(yoy[prod_cols_nsa]),
-        "yoy_despesas": df_to_series_dict(yoy[desp_cols_nsa]),
+        "yoy_producao": df_to_series_dict(yoy[prod_cols_4q]),
+        "yoy_despesas": df_to_series_dict(yoy[desp_cols_4q]),
         "yoy_recent_datas": pd.DatetimeIndex(yoy_recent.index.to_timestamp()).strftime("%Y-%m-%d").tolist(),
-        "yoy_recent_producao": df_to_series_dict(yoy_recent[prod_cols_nsa]),
-        "yoy_recent_despesas": df_to_series_dict(yoy_recent[desp_cols_nsa]),
+        "yoy_recent_producao": df_to_series_dict(yoy_recent[prod_cols_4q]),
+        "yoy_recent_despesas": df_to_series_dict(yoy_recent[desp_cols_4q]),
         "part_recent_prod_datas": pd.DatetimeIndex(shares_prod_recent.index.to_timestamp()).strftime("%Y-%m-%d").tolist(),
         "part_recent_producao": df_to_series_dict(shares_prod_recent),
         "part_recent_desp_datas": pd.DatetimeIndex(shares_desp_recent.index.to_timestamp()).strftime("%Y-%m-%d").tolist(),
