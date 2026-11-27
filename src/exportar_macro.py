@@ -398,8 +398,8 @@ def main():
         },
     }
 
-    # 5. PIB trimestral:
-    # - Tabela 1621, var 584: índice encadeado com ajuste sazonal -> crescimento trimestral (t / t-1)
+    # 5. PIB trimestral real:
+    # - Tabela 1621, var 584: índice encadeado com ajuste sazonal -> variação trimestral (t / t-1)
     # - Tabela 1620, var 583: índice encadeado sem ajuste sazonal -> variação interanual (t / t-4)
     gdp1621_sa = sidra_series(1621, 584, ALL_CATS, start_year=2016)
     gdp1620_nsa = sidra_series(1620, 583, ALL_CATS, start_year=2015)
