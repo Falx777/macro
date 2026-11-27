@@ -421,14 +421,14 @@ function renderizarPizzaResumo(divId, titulo, bloco, unidadeBase) {
     type: "pie",
     labels,
     values: valores,
-    texttemplate: "%{percent:.1%}",
-    textinfo: "percent",
+    texttemplate: "%{value:.2f}%",
+    textinfo: "text",
     textposition: "inside",
     insidetextorientation: "auto",
     textfont: { size: 14, color: "#ffffff", family: "Arial, sans-serif" },
     marker: { colors: labels.map((_, i) => paleta[i % paleta.length]), line: { color: "#ffffff", width: 1.5 } },
     sort: false,
-    hovertemplate: "%{label}<br>%{value:.2f}%<extra></extra>"
+    hovertemplate: "%{label}<br>Participação: %{value:.2f}%<extra></extra>"
   }], {
     title: { text: `${titulo}<br><sup>${escaparHTML(bloco.trimestre || "")} — participação sobre ${unidadeBase}</sup>`, x: 0.02, xanchor: "left", font: { size: 19 } },
     showlegend: true,
@@ -439,7 +439,46 @@ function renderizarPizzaResumo(divId, titulo, bloco, unidadeBase) {
   }, { responsive: true, displaylogo: false });
 }
 
-function renderizarResumo(resumo) {
+function renderizarBarrasDespesasResumo(divId, pib) {
+  const el = document.getElementById(divId);
+  const datas = pib?.part_recent_desp_datas || [];
+  const series = pib?.part_recent_despesas || {};
+  if (!el || !datas.length || !series || !Object.keys(series).length) return;
+
+  const ultimoIndice = datas.length - 1;
+  const itens = Object.entries(series)
+    .map(([nome, valores]) => ({ nome, valor: Number(valores?.[ultimoIndice]) }))
+    .filter(x => Number.isFinite(x.valor))
+    .sort((a, b) => a.valor - b.valor);
+
+  if (!itens.length) return;
+
+  const trimestre = String(datas[ultimoIndice]);
+  const rotuloPeriodo = /^\d{4}-\d{2}-\d{2}$/.test(trimestre) ? dataBR(trimestre) : trimestre;
+  Plotly.newPlot(divId, [{
+    type: "bar",
+    orientation: "h",
+    y: itens.map(x => x.nome),
+    x: itens.map(x => x.valor),
+    marker: { color: itens.map(x => x.valor < 0 ? "#dc6464" : "#079fe0") },
+    text: itens.map(x => `${numeroBR(x.valor, 2)}%`),
+    textposition: "outside",
+    cliponaxis: false,
+    hovertemplate: "%{y}<br>Participação no PIB: %{x:.2f}%<extra></extra>"
+  }], {
+    title: {
+      text: `Participação das despesas no PIB — últimos quatro trimestres<br><sup>Janela encerrada em ${escaparHTML(rotuloPeriodo)}</sup>`,
+      x: 0.02, xanchor: "left", font: { size: 18 }
+    },
+    margin: { t: 76, b: 55, l: 190, r: 55 },
+    height: 390,
+    xaxis: { title: "% do PIB", zeroline: true, zerolinewidth: 2, zerolinecolor: "#64748b", ticksuffix: "%" },
+    yaxis: { automargin: true },
+    showlegend: false
+  }, { responsive: true, displaylogo: false });
+}
+
+function renderizarResumo(resumo, pibDados) {
   const host = document.getElementById("quadro_resumo");
   if (!host || !resumo) return;
 
@@ -540,7 +579,7 @@ function renderizarResumo(resumo) {
       <section class="qr-indicadores">${cardsDemais || '<div class="qr-vazio">Indicadores complementares não disponíveis</div>'}</section>
       <section class="qr-pizzas">
         <div class="qr-pizza-card"><div id="quadro_resumo_pizza_producao" class="qr-pizza"></div></div>
-        <div class="qr-pizza-card"><div id="quadro_resumo_pizza_despesas" class="qr-pizza"></div></div>
+        <div class="qr-pizza-card"><div id="quadro_resumo_barras_despesas" class="qr-pizza"></div></div>
       </section>
     </div>
     <div class="qr-fonte-geral">Atualização do arquivo: ${escaparHTML(resumo.gerado_em_utc || "—")}. As datas e fontes específicas aparecem em cada indicador.</div>
@@ -548,7 +587,9 @@ function renderizarResumo(resumo) {
 
   const pizzas = resumo.graficos_pizza || {};
   renderizarPizzaResumo("quadro_resumo_pizza_producao", "Composição do PIB — produção", pizzas.producao, "valor adicionado a preços básicos");
-  renderizarPizzaResumo("quadro_resumo_pizza_despesas", "Composição do PIB — despesas", pizzas.despesas, "PIB a preços de mercado");
+  // Despesas não devem ser exibidas em pizza: componentes incluem importações negativas e
+  // as participações não formam partes mutuamente exclusivas de um total de 100%.
+  renderizarBarrasDespesasResumo("quadro_resumo_barras_despesas", pibDados || {});
 }
 
 function renderizarTodos(modo = "linha") {
@@ -684,7 +725,7 @@ function renderizarTodos(modo = "linha") {
   renderizarPibColunas(d.pib);
  // 6. grafico das estatisticas fiscais, cambio e ibovespa
   renderizarNovosTemas(d.novos_temas, cfg, modo);  
-  renderizarResumo(d.resumo);
+  renderizarResumo(d.resumo, d.pib);
 
 }
 
