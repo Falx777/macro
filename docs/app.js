@@ -438,66 +438,97 @@ function renderizarResumo(resumo) {
   if (!host || !resumo) return;
 
   const linhas = Array.isArray(resumo.tabela) ? resumo.tabela : [];
-  const tabelaHTML = linhas.map(l => `
-    <tr>
-      <td>${escaparHTML(l.indicador)}</td>
-      <td class="qr-num">${numeroBR(l.resultado, 2)} ${escaparHTML(l.unidade || "")}</td>
-      <td>${dataBR(l.data)}</td>
-      <td class="qr-fonte">${escaparHTML(l.fonte || "—")}</td>
-    </tr>
-  `).join("");
+  const normalizar = (s) => String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const achar = (termo) => linhas.find(l => normalizar(l.indicador).includes(normalizar(termo)));
+  const formatarValor = (l) => {
+    if (!l) return "—";
+    const unidade = l.unidade || "";
+    const casas = unidade === "pontos" ? 0 : 2;
+    return `${numeroBR(l.resultado, casas)}${unidade ? ` ${escaparHTML(unidade)}` : ""}`;
+  };
+  const fonteData = (l) => l ? `<small>${dataBR(l.data)} · ${escaparHTML(l.fonte || "Fonte não informada")}</small>` : "<small>Não disponível</small>";
+  const cartaoIndicador = (l, classe = "") => l ? `
+    <article class="qr-indicador ${classe}">
+      <div class="qr-indicador-titulo">${escaparHTML(l.indicador)}</div>
+      <div class="qr-indicador-valor">${formatarValor(l)}</div>
+      ${fonteData(l)}
+    </article>` : "";
 
+  const ipca = linhas.filter(l => normalizar(l.indicador).startsWith("ipca") || normalizar(l.indicador).includes("meta de inflacao") || normalizar(l.indicador).includes("desvio do ipca"));
+  const pibProd = linhas.filter(l => normalizar(l.indicador).startsWith("pib — producao") || normalizar(l.indicador).startsWith("pib - producao"));
+  const pibDesp = linhas.filter(l => normalizar(l.indicador).startsWith("pib — despesas") || normalizar(l.indicador).startsWith("pib - despesas"));
+  const usados = new Set([...ipca, ...pibProd, ...pibDesp]);
+  const demais = linhas.filter(l => !usados.has(l));
+
+  const blocoTopo = (titulo, classe, itens, destaque) => `
+    <section class="qr-bloco ${classe}">
+      <header class="qr-bloco-cabecalho"><strong>${titulo}</strong><span>${dataBR(destaque?.data || (itens[0] && itens[0].data))}</span></header>
+      <div class="qr-bloco-conteudo">
+        ${itens.length ? itens.map(l => `
+          <div class="qr-linha">
+            <span class="qr-linha-nome">${escaparHTML(l.indicador.replace(/^IPCA\s*[—-]?\s*/i, "").replace(/^PIB\s*[—-]?\s*(produção|despesas)\s*[—-]?\s*/i, ""))}</span>
+            <b>${formatarValor(l)}</b>
+            <small>${dataBR(l.data)} · ${escaparHTML(l.fonte || "")}</small>
+          </div>`).join("") : '<div class="qr-vazio">Dados não disponíveis</div>'}
+      </div>
+    </section>`;
+
+  const indicadorPrincipal = achar("IPCA — acumulado em 12 meses") || ipca[0];
+  const cardsDemais = demais.map(l => cartaoIndicador(l)).join("");
   host.innerHTML = `
     <style>
-      #quadro_resumo .qr-wrap { width:100%; }
-      #quadro_resumo .qr-tabela-wrap { width:100%; overflow-x:auto; }
-      #quadro_resumo table { width:100%; border-collapse:collapse; font-size:13px; }
-      #quadro_resumo th, #quadro_resumo td { padding:9px 10px; border-bottom:1px solid rgba(127,127,127,.22); text-align:left; vertical-align:top; }
-      #quadro_resumo th { font-weight:700; white-space:nowrap; }
-      #quadro_resumo .qr-num { font-variant-numeric:tabular-nums; white-space:nowrap; font-weight:600; }
-      #quadro_resumo .qr-fonte { min-width:220px; font-size:11px; opacity:.78; }
-      #quadro_resumo .qr-graficos { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:16px; margin-top:22px; }
-      #quadro_resumo .qr-pizza { min-width:0; min-height:340px; }
-      #quadro_resumo .qr-subtitulo { margin:22px 0 10px; font-size:1.05rem; font-weight:700; }
-      #quadro_resumo .qr-atualizacao { font-size:11px; opacity:.7; margin-top:12px; }
-      @media (max-width:600px) {
-        #quadro_resumo table { font-size:12px; }
-        #quadro_resumo th, #quadro_resumo td { padding:7px 8px; }
-        #quadro_resumo .qr-pizza { min-height:390px; }
-      }
+      #quadro_resumo { width:100%; color:var(--text-color, #172033); }
+      #quadro_resumo * { box-sizing:border-box; }
+      #quadro_resumo .qr-painel-titulo { margin:0 0 18px; font-size:clamp(20px,2.4vw,28px); font-weight:800; }
+      #quadro_resumo .qr-topo { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:18px; align-items:start; }
+      #quadro_resumo .qr-bloco { min-width:0; border-radius:18px; overflow:hidden; background:#f4f5f7; box-shadow:0 3px 12px rgba(0,0,0,.08); }
+      #quadro_resumo .qr-bloco-cabecalho { min-height:82px; padding:12px 14px 9px; color:#fff; text-align:center; display:flex; flex-direction:column; justify-content:center; border-radius:18px; }
+      #quadro_resumo .qr-bloco-cabecalho strong { font-size:clamp(19px,2.1vw,29px); line-height:1.08; text-transform:uppercase; }
+      #quadro_resumo .qr-bloco-cabecalho span { font-size:14px; opacity:.9; margin-top:5px; }
+      #quadro_resumo .qr-ipca .qr-bloco-cabecalho { background:#20ad50; }
+      #quadro_resumo .qr-producao .qr-bloco-cabecalho { background:#ed1c2a; }
+      #quadro_resumo .qr-despesas .qr-bloco-cabecalho { background:#079fe0; }
+      #quadro_resumo .qr-bloco-conteudo { padding:0 12px 12px; }
+      #quadro_resumo .qr-linha { padding:10px 11px; margin-top:8px; background:#858585; color:#fff; border-radius:7px; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:3px 8px; align-items:center; }
+      #quadro_resumo .qr-linha:nth-child(even) { background:#b9b9b9; }
+      #quadro_resumo .qr-linha-nome { font-weight:700; font-size:14px; overflow-wrap:anywhere; }
+      #quadro_resumo .qr-linha b { font-size:15px; white-space:nowrap; }
+      #quadro_resumo .qr-linha small { grid-column:1/-1; font-size:10px; line-height:1.35; opacity:.94; overflow-wrap:anywhere; }
+      #quadro_resumo .qr-vazio { padding:18px; text-align:center; color:#666; }
+      #quadro_resumo .qr-inferior { display:grid; grid-template-columns:minmax(220px,.9fr) minmax(0,2.1fr); gap:24px; margin-top:28px; align-items:start; }
+      #quadro_resumo .qr-indicadores { display:grid; gap:12px; }
+      #quadro_resumo .qr-indicador { border-radius:15px; padding:12px 15px; color:#fff; background:#ed1c2a; box-shadow:0 3px 10px rgba(0,0,0,.08); }
+      #quadro_resumo .qr-indicador:nth-child(3n+2) { background:#20ad50; }
+      #quadro_resumo .qr-indicador:nth-child(3n) { background:#4148c9; }
+      #quadro_resumo .qr-indicador-titulo { font-size:15px; font-weight:700; }
+      #quadro_resumo .qr-indicador-valor { font-size:25px; line-height:1.15; font-weight:800; }
+      #quadro_resumo .qr-indicador small { display:block; margin-top:5px; font-size:10px; line-height:1.35; opacity:.94; overflow-wrap:anywhere; }
+      #quadro_resumo .qr-pizzas { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:18px; }
+      #quadro_resumo .qr-pizza-card { min-width:0; text-align:center; }
+      #quadro_resumo .qr-pizza { width:100%; height:330px; min-width:0; }
+      #quadro_resumo .qr-fonte-geral { margin-top:16px; font-size:10px; opacity:.7; }
+      @media(max-width:850px) { #quadro_resumo .qr-topo { grid-template-columns:1fr; } #quadro_resumo .qr-inferior { grid-template-columns:1fr; } }
+      @media(max-width:560px) { #quadro_resumo .qr-pizzas { grid-template-columns:1fr; } #quadro_resumo .qr-pizza { height:310px; } }
     </style>
-    <div class="qr-wrap">
-      <h3>Resumo dos indicadores econômicos</h3>
-      <div class="qr-tabela-wrap">
-        <table>
-          <thead><tr>
-            <th>Indicador</th><th>Último resultado</th><th>Data / período</th><th>Fonte</th>
-          </tr></thead>
-          <tbody>${tabelaHTML || '<tr><td colspan="4">Não há dados de resumo no JSON.</td></tr>'}</tbody>
-        </table>
-      </div>
-      <div class="qr-subtitulo">Composição do PIB — último trimestre disponível</div>
-      <div class="qr-graficos">
-        <div id="quadro_resumo_pizza_producao" class="qr-pizza"></div>
-        <div id="quadro_resumo_pizza_despesas" class="qr-pizza"></div>
-      </div>
-      <div class="qr-atualizacao">Dados gerados em: ${escaparHTML(resumo.gerado_em_utc || "—")}. As datas indicam o período de referência de cada série.</div>
+    <h3 class="qr-painel-titulo">Painel-resumo da economia brasileira</h3>
+    <div class="qr-topo">
+      ${blocoTopo("IPCA", "qr-ipca", ipca, indicadorPrincipal)}
+      ${blocoTopo("PIB produção", "qr-producao", pibProd)}
+      ${blocoTopo("PIB despesas", "qr-despesas", pibDesp)}
     </div>
+    <div class="qr-inferior">
+      <section class="qr-indicadores">${cardsDemais || '<div class="qr-vazio">Indicadores complementares não disponíveis</div>'}</section>
+      <section class="qr-pizzas">
+        <div class="qr-pizza-card"><div id="quadro_resumo_pizza_producao" class="qr-pizza"></div></div>
+        <div class="qr-pizza-card"><div id="quadro_resumo_pizza_despesas" class="qr-pizza"></div></div>
+      </section>
+    </div>
+    <div class="qr-fonte-geral">Atualização do arquivo: ${escaparHTML(resumo.gerado_em_utc || "—")}. As datas e fontes específicas aparecem em cada indicador.</div>
   `;
 
   const pizzas = resumo.graficos_pizza || {};
-  renderizarPizzaResumo(
-    "quadro_resumo_pizza_producao",
-    "Ótica da produção",
-    pizzas.producao,
-    "valor adicionado a preços básicos"
-  );
-  renderizarPizzaResumo(
-    "quadro_resumo_pizza_despesas",
-    "Ótica das despesas",
-    pizzas.despesas,
-    "PIB a preços de mercado"
-  );
+  renderizarPizzaResumo("quadro_resumo_pizza_producao", "Composição do PIB — produção", pizzas.producao, "valor adicionado a preços básicos");
+  renderizarPizzaResumo("quadro_resumo_pizza_despesas", "Composição do PIB — despesas", pizzas.despesas, "PIB a preços de mercado");
 }
 
 function renderizarTodos(modo = "linha") {
