@@ -181,7 +181,7 @@ def parse_quarter(code):
     return pd.Period(year=int(s[:4]), quarter=int(s[-2:]), freq="Q")
 
 
-def sidra_series(table, variable, categories, start_year=2015):
+def sidra_series(table, variable, categories, start_year=2016):
     desc_url = f"https://apisidra.ibge.gov.br/DescritoresTabela/t/{table}"
     r_desc = SESSION.get(desc_url, timeout=60)
     r_desc.raise_for_status()
@@ -398,61 +398,55 @@ def main():
         },
     }
 
-    # 5. PIB trimestral oficial (SIDRA 5932: var 6561 trimestral dessazonalizada; var 6562 acumulada 4 tri)
-    # e participação sobre valores encadeados (SIDRA 6613, var 9319)
-    gdp5932_qoq = sidra_series(5932, 6561, ALL_CATS, start_year=2016)
-    gdp5932_4q = sidra_series(5932, 6562, ALL_CATS, start_year=2016)
-    gdp6613 = sidra_series(6613, 9319, ALL_CATS, start_year=2015)
+    # 5. PIB SIDRA 1621 (índice encadeado) e 6613 (valores encadeados)
+    gdp1621 = sidra_series(1621, 584, ALL_CATS, start_year=2016)
+    gdp6613 = sidra_series(6613, 9319, ALL_CATS, start_year=2016)
 
-    qoq = gdp5932_qoq.pivot_table(index="trimestre", columns="categoria", values="valor", aggfunc="last").sort_index()
-    qoq = qoq.dropna(how="all")
-
-    yoy = gdp5932_4q.pivot_table(index="trimestre", columns="categoria", values="valor", aggfunc="last").sort_index()
-    yoy = yoy.dropna(how="all")
+    idx = gdp1621.pivot_table(index="trimestre", columns="categoria", values="valor", aggfunc="last").sort_index()
+    qoq = (idx.pct_change() * 100).dropna(how="all")
+    yoy = ((idx / idx.shift(4) - 1) * 100).dropna(how="all")
 
     last_q = yoy.index.max()
     yoy_recent = yoy[yoy.index >= last_q - 3]
 
     val = gdp6613.pivot_table(index="trimestre", columns="categoria", values="valor", aggfunc="last").sort_index()
-    roll4_val = val.rolling(4, min_periods=4).sum()
+    roll4 = val.rolling(4, min_periods=4).sum()
 
-    shares_prod = pd.DataFrame(index=roll4_val.index)
+    shares_prod = pd.DataFrame(index=roll4.index)
     for name in PRODUCAO.values():
         if (
             name != "Valor adicionado a preços básicos"
-            and name in roll4_val
-            and "Valor adicionado a preços básicos" in roll4_val
+            and name in roll4
+            and "Valor adicionado a preços básicos" in roll4
         ):
-            shares_prod[name] = 100 * roll4_val[name] / roll4_val["Valor adicionado a preços básicos"]
+            shares_prod[name] = 100 * roll4[name] / roll4["Valor adicionado a preços básicos"]
     shares_prod = shares_prod.dropna(how="all")
     shares_prod_recent = shares_prod[shares_prod.index >= shares_prod.index.max() - 3]
 
-    shares_desp = pd.DataFrame(index=roll4_val.index)
+    shares_desp = pd.DataFrame(index=roll4.index)
     for name in DESPESAS.values():
         if (
             name != "PIB a preços de mercado"
-            and name in roll4_val
-            and "PIB a preços de mercado" in roll4_val
+            and name in roll4
+            and "PIB a preços de mercado" in roll4
         ):
-            shares_desp[name] = 100 * roll4_val[name] / roll4_val["PIB a preços de mercado"]
+            shares_desp[name] = 100 * roll4[name] / roll4["PIB a preços de mercado"]
     shares_desp = shares_desp.dropna(how="all")
     shares_desp_recent = shares_desp[shares_desp.index >= shares_desp.index.max() - 3]
 
-    prod_cols_qoq = [c for c in PRODUCAO.values() if c in qoq.columns]
-    desp_cols_qoq = [c for c in DESPESAS.values() if c in qoq.columns]
-    prod_cols_4q = [c for c in PRODUCAO.values() if c in yoy.columns]
-    desp_cols_4q = [c for c in DESPESAS.values() if c in yoy.columns]
+    prod_cols = [c for c in PRODUCAO.values() if c in idx.columns]
+    desp_cols = [c for c in DESPESAS.values() if c in idx.columns]
 
     payload["pib"] = {
         "qoq_datas": pd.DatetimeIndex(qoq.index.to_timestamp()).strftime("%Y-%m-%d").tolist(),
-        "qoq_producao": df_to_series_dict(qoq[prod_cols_qoq]),
-        "qoq_despesas": df_to_series_dict(qoq[desp_cols_qoq]),
+        "qoq_producao": df_to_series_dict(qoq[prod_cols]),
+        "qoq_despesas": df_to_series_dict(qoq[desp_cols]),
         "yoy_datas": pd.DatetimeIndex(yoy.index.to_timestamp()).strftime("%Y-%m-%d").tolist(),
-        "yoy_producao": df_to_series_dict(yoy[prod_cols_4q]),
-        "yoy_despesas": df_to_series_dict(yoy[desp_cols_4q]),
+        "yoy_producao": df_to_series_dict(yoy[prod_cols]),
+        "yoy_despesas": df_to_series_dict(yoy[desp_cols]),
         "yoy_recent_datas": pd.DatetimeIndex(yoy_recent.index.to_timestamp()).strftime("%Y-%m-%d").tolist(),
-        "yoy_recent_producao": df_to_series_dict(yoy_recent[prod_cols_4q]),
-        "yoy_recent_despesas": df_to_series_dict(yoy_recent[desp_cols_4q]),
+        "yoy_recent_producao": df_to_series_dict(yoy_recent[prod_cols]),
+        "yoy_recent_despesas": df_to_series_dict(yoy_recent[desp_cols]),
         "part_recent_prod_datas": pd.DatetimeIndex(shares_prod_recent.index.to_timestamp()).strftime("%Y-%m-%d").tolist(),
         "part_recent_producao": df_to_series_dict(shares_prod_recent),
         "part_recent_desp_datas": pd.DatetimeIndex(shares_desp_recent.index.to_timestamp()).strftime("%Y-%m-%d").tolist(),
