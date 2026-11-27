@@ -1,5 +1,153 @@
 let DADOS_CACHE = null;
 
+function tracosComDestaque(datas, valores, nome, cor, modo, destaque, sufixo = "") {
+  const traces = [tracoSerie(datas, valores, nome, cor, modo)];
+  if (destaque) {
+    traces.push({
+      x: [destaque.extremo_data],
+      y: [destaque.extremo_valor],
+      type: "scatter",
+      mode: "markers",
+      marker: { size: 11, symbol: "star", color: "#f59e0b" },
+      name: `Extremo: ${Number(destaque.extremo_valor).toLocaleString("pt-BR", { maximumFractionDigits: 2 })}${sufixo} (${destaque.extremo_data})`,
+    });
+    traces.push({
+      x: [destaque.ultimo_data],
+      y: [destaque.ultimo_valor],
+      type: "scatter",
+      mode: "markers",
+      marker: { size: 10, symbol: "diamond", color: "#dc2626" },
+      name: `Último: ${Number(destaque.ultimo_valor).toLocaleString("pt-BR", { maximumFractionDigits: 2 })}${sufixo} (${destaque.ultimo_data})`,
+    });
+  }
+  return traces;
+}
+
+function renderizarNovosTemas(nt, cfg, modo = "linha") {
+  if (!nt) return;
+
+  if (nt.cambio && document.getElementById("g-cambio")) {
+    Plotly.newPlot(
+      "g-cambio",
+      [
+        tracoSerie(nt.cambio.datas, nt.cambio.comercial, "Dólar comercial — venda (média)", "#1d4ed8", modo),
+        tracoSerie(nt.cambio.datas, nt.cambio.turismo_plot, "Dólar turismo — venda (média)", "#ea580c", modo),
+      ],
+      {
+        title: "Câmbio diário — dólar comercial e turismo para venda",
+        yaxis: { title: "R$ por US$" },
+        hovermode: "x unified",
+      },
+      { responsive: true }
+    );
+  }
+
+  if (nt.deficit_nominal && document.getElementById("g-deficit-nominal")) {
+    Plotly.newPlot(
+      "g-deficit-nominal",
+      tracosComDestaque(
+        nt.deficit_nominal.datas,
+        nt.deficit_nominal.valores,
+        "Resultado nominal orientado como déficit (R$ bi)",
+        "#1d4ed8",
+        modo,
+        nt.deficit_nominal.destaque,
+        " bi"
+      ),
+      {
+        title: "NFSP — resultado nominal acumulado em 12 meses (déficit negativo)",
+        yaxis: { title: "R$ bilhões nominais", zeroline: true },
+        hovermode: "x unified",
+      },
+      { responsive: true }
+    );
+  }
+
+  if (nt.divida_bruta && document.getElementById("g-divida-bruta")) {
+    Plotly.newPlot(
+      "g-divida-bruta",
+      tracosComDestaque(
+        nt.divida_bruta.datas,
+        nt.divida_bruta.valores,
+        "DBGG (% do PIB)",
+        "#1d4ed8",
+        modo,
+        nt.divida_bruta.destaque,
+        "% do PIB"
+      ),
+      {
+        title: "Dívida bruta do governo geral — metodologia a partir de 2008",
+        yaxis: { title: "% do PIB" },
+        hovermode: "x unified",
+      },
+      { responsive: true }
+    );
+  }
+
+  if (nt.deficit_primario && document.getElementById("g-deficit-primario")) {
+    Plotly.newPlot(
+      "g-deficit-primario",
+      tracosComDestaque(
+        nt.deficit_primario.datas,
+        nt.deficit_primario.valores,
+        "Resultado primário NFSP com sinal invertido (R$ bi)",
+        "#1d4ed8",
+        modo,
+        nt.deficit_primario.destaque,
+        " bi"
+      ),
+      {
+        title: "NFSP — resultado primário acumulado em 12 meses (após inversão de sinal)",
+        yaxis: { title: "R$ bilhões nominais", zeroline: true },
+        hovermode: "x unified",
+      },
+      { responsive: true }
+    );
+  }
+
+  if (nt.ibovespa && document.getElementById("g-ibovespa")) {
+    Plotly.newPlot(
+      "g-ibovespa",
+      tracosComDestaque(
+        nt.ibovespa.datas,
+        nt.ibovespa.valores,
+        "Ibovespa — fechamento",
+        "#1d4ed8",
+        modo,
+        nt.ibovespa.destaque,
+        " pts"
+      ),
+      {
+        title: "Ibovespa — índice de ações, fechamento diário",
+        yaxis: { title: "Pontos do índice" },
+        hovermode: "x unified",
+      },
+      { responsive: true }
+    );
+  }
+
+  if (nt.volatilidade_ibovespa && document.getElementById("g-volatilidade-ibov")) {
+    Plotly.newPlot(
+      "g-volatilidade-ibov",
+      [
+        tracoSerie(
+          nt.volatilidade_ibovespa.datas,
+          nt.volatilidade_ibovespa.valores,
+          "Volatilidade do Ibovespa",
+          "#0f766e",
+          modo
+        ),
+      ],
+      {
+        title: "Volatilidade do índice de ações — Ibovespa",
+        yaxis: { title: "Volatilidade" },
+        hovermode: "x unified",
+      },
+      { responsive: true }
+    );
+  }
+}
+
 function tracoSerie(x, y, nome, cor, modo) {
   if (modo === "coluna") {
     return {
@@ -361,6 +509,9 @@ function renderizarTodos(modo = "linha") {
 
   // 5. Gráficos trimestrais do PIB (SIDRA 1621 e 6613) em coluna
   renderizarPibColunas(d.pib);
+ // 6. grafico das estatisticas fiscais, cambio e ibovespa
+  renderizarNovosTemas(d.novos_temas, cfg, modo);  
+
 }
 
 async function iniciar() {
