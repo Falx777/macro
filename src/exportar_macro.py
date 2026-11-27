@@ -2,10 +2,13 @@ import base64
 import json
 import time
 from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import requests
 from bcb import Expectativas
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 START = pd.Timestamp("2003-01-01")
 ANO_EXPECTATIVA_BCB = 2026
@@ -80,6 +83,19 @@ ALL_CATS = list(PRODUCAO) + list(DESPESAS)
 
 SESSION = requests.Session()
 SESSION.headers.update({"User-Agent": "macro-github-pages/1.0"})
+SESSION.mount(
+    "https://",
+    HTTPAdapter(
+        max_retries=Retry(
+            total=5,
+            connect=5,
+            read=5,
+            backoff_factor=1,
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=["GET"],
+        )
+    ),
+)
 
 
 def sgs_series(codigo, nome, start=START):
@@ -95,9 +111,11 @@ def sgs_series(codigo, nome, start=START):
             "dataFinal": end.strftime("%d/%m/%Y"),
         }
         chunk = None
+        last_text = ""
         for tentativa in range(5):
             try:
                 r = SESSION.get(url, params=params, timeout=60)
+                last_text = r.text if r is not None else ""
                 if r.status_code in (429, 502, 503, 504):
                     time.sleep(2 ** tentativa)
                     continue
@@ -114,7 +132,7 @@ def sgs_series(codigo, nome, start=START):
             except (requests.RequestException, ValueError) as exc:
                 if tentativa == 4:
                     raise RuntimeError(
-                        f"Falha ao obter/decodificar SGS {codigo} ({cursor:%Y-%m-%d} a {end:%Y-%m-%d}): {r.text[:200] if 'r' in locals() else ''}"
+                        f"Falha ao obter/decodificar SGS {codigo} ({cursor:%Y-%m-%d} a {end:%Y-%m-%d}): {last_text[:200]}"
                     ) from exc
                 time.sleep(2 ** tentativa)
         if chunk:
@@ -132,10 +150,20 @@ def sgs_series(codigo, nome, start=START):
     return df
 
 
-def ipea_series(codigo, nome, start=START):
+def ipea_series(codigo, nome, tema=None, start=START):
     url = f"https://www.ipeadata.gov.br/api/odata4/ValoresSerie(SERCODIGO='{codigo}')"
-    r = SESSION.get(url, timeout=90)
-    r.raise_for_status()
+    for tentativa in range(5):
+        try:
+            r = SESSION.get(url, timeout=90)
+            if r.status_code in (429, 500, 502, 503, 504):
+                time.sleep(2 ** tentativa)
+                continue
+            r.raise_for_status()
+            break
+        except requests.RequestException:
+            if tentativa == 4:
+                raise
+            time.sleep(2 ** tentativa)
     df = pd.DataFrame(r.json().get("value", []))
     if df.empty:
         raise ValueError(f"IPEADATA retornou série vazia: {codigo}")
@@ -161,6 +189,7 @@ def sidra_series(table, variable, categories, start_year=2016):
     class_id = desc["Classificacoes"][0]["Id"]
 
     url = f"https://apisidra.ibge.gov.br/values/t/{table}/n1/1/v/{variable}/p/all/c{class_id}/all"
+    raw = None
     for tentativa in range(5):
         try:
             r = SESSION.get(url, timeout=120)
@@ -202,9 +231,21 @@ def to_num_list(series_num):
 
 
 def df_to_series_dict(df_wide):
+    return {col: to_num_list(df_wide[col]) for col in df_wide.columns}
+
+
+def resumo_destaque(df, col, maximize="abs"):
+    valid = df.dropna(subset=["data", col]).sort_values("data").reset_index(drop=True)
+    if valid.empty:
+        return None
+    idx = valid[col].abs().idxmax() if maximize == "abs" else valid[col].idxmax()
+    ext = valid.loc[idx]
+    ult = valid.iloc[-1]
     return {
-        col: to_num_list(df_wide[col])
-        for col in df_wide.columns
+        "extremo_data": ext["data"].strftime("%Y-%m-%d"),
+        "extremo_valor": round(float(ext[col]), 4),
+        "ultimo_data": ult["data"].strftime("%Y-%m-%d"),
+        "ultimo_valor": round(float(ult[col]), 4),
     }
 
 
@@ -253,12 +294,16 @@ def main():
     ep = em.get_endpoint("ExpectativasMercadoAnuais")
 
     try:
-        q_ipca = ep.query().filter(ep.Indicador.isin(["IPCA"])).select(
-            ep.Data, ep.Indicador, ep.DataReferencia, ep.Media, ep.Mediana
+        q_ipca = (
+            ep.query()
+            .filter(ep.Indicador.isin(["IPCA"]))
+            .select(ep.Data, ep.Indicador, ep.DataReferencia, ep.Media, ep.Mediana)
         )
     except Exception:
-        q_ipca = ep.query().filter(ep.Indicador == "IPCA").select(
-            ep.Data, ep.Indicador, ep.DataReferencia, ep.Media, ep.Mediana
+        q_ipca = (
+            ep.query()
+            .filter(ep.Indicador == "IPCA")
+            .select(ep.Data, ep.Indicador, ep.DataReferencia, ep.Media, ep.Mediana)
         )
     exp_ipca = q_ipca.collect()
     exp_ipca["Data"] = pd.to_datetime(exp_ipca["Data"], errors="coerce")
@@ -288,8 +333,10 @@ def main():
 
     # 3. Selic efetiva + expectativa anual Selic
     selic = sgs_series(432, "Meta Selic definida pelo Copom").dropna(subset=["valor"])
-    qs = ep.query().filter(ep.Indicador == "Selic").select(
-        ep.Data, ep.Indicador, ep.DataReferencia, ep.Media, ep.Mediana
+    qs = (
+        ep.query()
+        .filter(ep.Indicador == "Selic")
+        .select(ep.Data, ep.Indicador, ep.DataReferencia, ep.Media, ep.Mediana)
     )
     ex_selic = qs.collect()
     ex_selic["Data"] = pd.to_datetime(ex_selic["Data"], errors="coerce")
@@ -298,7 +345,7 @@ def main():
     ex_selic_cons = ex_selic.groupby(["Data", "DataReferencia"], as_index=False).agg(
         Media=("Media", "median"), Mediana=("Mediana", "median")
     )
-    latest_selic_date = ex_selic_cons.Data.max()
+    latest_selic_date = ex_selic_cons["Data"].max()
     ex_selic_lat = ex_selic_cons[ex_selic_cons["Data"] == latest_selic_date].copy()
     anos_ref = pd.to_numeric(ex_selic_lat["DataReferencia"], errors="coerce")
     anos_futuros = anos_ref[anos_ref >= latest_selic_date.year]
@@ -404,6 +451,95 @@ def main():
         "part_recent_producao": df_to_series_dict(shares_prod_recent),
         "part_recent_desp_datas": pd.DatetimeIndex(shares_desp_recent.index.to_timestamp()).strftime("%Y-%m-%d").tolist(),
         "part_recent_despesas": df_to_series_dict(shares_desp_recent),
+    }
+
+    # 6. Câmbio diário, NFSP (nominal e primário), Dívida Bruta e Ibovespa
+    cambio_comercial = ipea_series("GM366_ERV366", "Câmbio comercial venda — média (R$/US$)", "07_cambio")
+    cambio_turismo = ipea_series("GM366_ERTUR366", "Câmbio turismo venda — média (R$/US$)", "07_cambio")
+
+    cambio_diario = (
+        cambio_comercial[["data", "valor"]]
+        .rename(columns={"valor": "comercial_R$_por_USD"})
+        .merge(
+            cambio_turismo[["data", "valor"]].rename(columns={"valor": "turismo_R$_por_USD"}),
+            on="data",
+            how="outer",
+        )
+        .sort_values("data")
+        .reset_index(drop=True)
+    )
+    ref_comercial = pd.merge_asof(
+        cambio_diario[["data"]].sort_values("data"),
+        cambio_comercial[["data", "valor"]]
+        .rename(columns={"valor": "comercial_referencia_ate_3dias"})
+        .sort_values("data"),
+        on="data",
+        direction="nearest",
+        tolerance=pd.Timedelta(days=3),
+    )
+    cambio_diario["comercial_referencia_ate_3dias"] = ref_comercial["comercial_referencia_ate_3dias"].to_numpy()
+    cambio_diario["razao_turismo_comercial"] = (
+        cambio_diario["turismo_R$_por_USD"] / cambio_diario["comercial_referencia_ate_3dias"]
+    )
+    cambio_diario["turismo_alerta_discrepancia"] = (
+        cambio_diario["comercial_referencia_ate_3dias"].notna()
+        & cambio_diario["turismo_R$_por_USD"].notna()
+        & ~cambio_diario["razao_turismo_comercial"].between(0.5, 1.5)
+    )
+    cambio_diario["turismo_plot_R$_por_USD"] = cambio_diario["turismo_R$_por_USD"].where(
+        ~cambio_diario["turismo_alerta_discrepancia"]
+    )
+
+    nominal_fonte = ipea_series("BM12_NFSPNNAS12", "NFSP nominal — fonte IPEADATA (R$ milhões)", "08_deficit_nominal")
+    nominal_tratado = nominal_fonte[["data", "valor"]].copy()
+    nominal_tratado["deficit_R$_bilhoes"] = -nominal_tratado["valor"] / 1000.0
+
+    divida_bruta = sgs_series(13762, "Dívida bruta do governo geral (% PIB) — metodologia a partir de 2008")
+
+    primario_fonte = ipea_series("BM12_NFSPPNAS12", "NFSP primária — fonte IPEADATA (R$ milhões)", "10_deficit_primario")
+    primario_tratado = primario_fonte[["data", "valor"]].copy()
+    primario_tratado["resultado_primario_sinal_invertido_R$_bilhoes"] = -primario_tratado["valor"] / 1000.0
+
+    ibovespa = ipea_series("GM366_IBVSP366", "Índice de ações — Ibovespa — fechamento", "11_ibovespa", start=START)
+    volatilidade_ibovespa = ipea_series(
+        "GM366_IBVSPV366",
+        "Volatilidade do índice de ações — Ibovespa — fechamento",
+        "12_volatilidade_ibovespa",
+        start=START,
+    )
+
+    payload["novos_temas"] = {
+        "cambio": {
+            "datas": to_iso_list(cambio_diario["data"]),
+            "comercial": to_num_list(cambio_diario["comercial_R$_por_USD"]),
+            "turismo_plot": to_num_list(cambio_diario["turismo_plot_R$_por_USD"]),
+        },
+        "deficit_nominal": {
+            "datas": to_iso_list(nominal_tratado["data"]),
+            "valores": to_num_list(nominal_tratado["deficit_R$_bilhoes"]),
+            "destaque": resumo_destaque(nominal_tratado, "deficit_R$_bilhoes", maximize="abs"),
+        },
+        "divida_bruta": {
+            "datas": to_iso_list(divida_bruta["data"]),
+            "valores": to_num_list(divida_bruta["valor"]),
+            "destaque": resumo_destaque(divida_bruta, "valor", maximize="value"),
+        },
+        "deficit_primario": {
+            "datas": to_iso_list(primario_tratado["data"]),
+            "valores": to_num_list(primario_tratado["resultado_primario_sinal_invertido_R$_bilhoes"]),
+            "destaque": resumo_destaque(
+                primario_tratado, "resultado_primario_sinal_invertido_R$_bilhoes", maximize="abs"
+            ),
+        },
+        "ibovespa": {
+            "datas": to_iso_list(ibovespa["data"]),
+            "valores": to_num_list(ibovespa["valor"]),
+            "destaque": resumo_destaque(ibovespa, "valor", maximize="value"),
+        },
+        "volatilidade_ibovespa": {
+            "datas": to_iso_list(volatilidade_ibovespa["data"]),
+            "valores": to_num_list(volatilidade_ibovespa["valor"]),
+        },
     }
 
     out_file = Path("docs/dados/macro_dados.json")
