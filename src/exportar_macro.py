@@ -249,6 +249,49 @@ def resumo_destaque(df, col, maximize="abs"):
     }
 
 
+
+def ultimo_registro(df, coluna="valor"):
+    """Retorna valor e data da observação mais recente não nula."""
+    valid = df.dropna(subset=["data", coluna]).sort_values("data")
+    if valid.empty:
+        return None
+    row = valid.iloc[-1]
+    return {
+        "data": row["data"].strftime("%Y-%m-%d"),
+        "valor": round(float(row[coluna]), 4),
+    }
+
+
+def variacao_desde(df, coluna, dias):
+    """Variação percentual contra a última observação em/antes da data de referência."""
+    valid = df.dropna(subset=["data", coluna]).sort_values("data")
+    if len(valid) < 2:
+        return None
+    atual = valid.iloc[-1]
+    corte = atual["data"] - pd.Timedelta(days=dias)
+    anteriores = valid[valid["data"] <= corte]
+    if anteriores.empty:
+        return None
+    base = anteriores.iloc[-1]
+    if float(base[coluna]) == 0:
+        return None
+    return {
+        "data_base": base["data"].strftime("%Y-%m-%d"),
+        "valor_base": round(float(base[coluna]), 4),
+        "variacao_pct": round((float(atual[coluna]) / float(base[coluna]) - 1) * 100, 4),
+    }
+
+
+def ponto_trimestral(df, trimestre, categoria):
+    if categoria not in df.columns or trimestre not in df.index or pd.isna(df.loc[trimestre, categoria]):
+        return None
+    return round(float(df.loc[trimestre, categoria]), 4)
+
+
+def data_trimestre(periodo):
+    return f"{periodo.year}-T{periodo.quarter}"
+
+
 def carregar_fotos_b64():
     if not MOSTRAR_FOTOS:
         return {}
@@ -539,6 +582,202 @@ def main():
         "volatilidade_ibovespa": {
             "datas": to_iso_list(volatilidade_ibovespa["data"]),
             "valores": to_num_list(volatilidade_ibovespa["valor"]),
+        },
+    }
+
+
+    # 7. Resumo executivo: último dado, data de referência e fonte
+    ipca_valid = cal.dropna(subset=["ipca_geral_12m"]).sort_index()
+    ipca_last_date = ipca_valid.index[-1]
+    ipca_last = ipca_valid.iloc[-1]
+    ipca_comp_last = {}
+    for nome in ipca_12m_df.columns:
+        serie = ipca_12m_df[nome].dropna()
+        if not serie.empty:
+            d = serie.index[-1]
+            ipca_comp_last[nome] = {
+                "valor_pct_12m": round(float(serie.iloc[-1]), 4),
+                "data": d.strftime("%Y-%m-%d"),
+                "fonte": "Banco Central do Brasil — SGS; cálculo próprio a partir da série mensal",
+            }
+
+    selic_last = ultimo_registro(selic)
+    des_last = ultimo_registro(des)
+    cambio_last = ultimo_registro(cambio_comercial)
+    ibov_last = ultimo_registro(ibovespa)
+    nominal_last = ultimo_registro(nominal_tratado, "deficit_R$_bilhoes")
+    divida_last = ultimo_registro(divida_bruta)
+    primario_last = ultimo_registro(primario_tratado, "resultado_primario_sinal_invertido_R$_bilhoes")
+
+    pib_last_q = idx.index.max()
+    pib_last_yoy = yoy.loc[pib_last_q] if pib_last_q in yoy.index else pd.Series(dtype=float)
+    pib_last_qoq = qoq.loc[pib_last_q] if pib_last_q in qoq.index else pd.Series(dtype=float)
+
+    producao_variacoes = {}
+    for nome in PRODUCAO.values():
+        producao_variacoes[nome] = {
+            "variacao_interanual_pct": (
+                round(float(pib_last_yoy[nome]), 4)
+                if nome in pib_last_yoy.index and pd.notna(pib_last_yoy[nome]) else None
+            ),
+            "variacao_trimestral_pct": (
+                round(float(pib_last_qoq[nome]), 4)
+                if nome in pib_last_qoq.index and pd.notna(pib_last_qoq[nome]) else None
+            ),
+            "trimestre": data_trimestre(pib_last_q),
+            "fonte": "IBGE — SIDRA, tabela 1621; cálculo próprio sobre índice encadeado",
+        }
+
+    despesas_variacoes = {}
+    for nome in DESPESAS.values():
+        despesas_variacoes[nome] = {
+            "variacao_interanual_pct": (
+                round(float(pib_last_yoy[nome]), 4)
+                if nome in pib_last_yoy.index and pd.notna(pib_last_yoy[nome]) else None
+            ),
+            "variacao_trimestral_pct": (
+                round(float(pib_last_qoq[nome]), 4)
+                if nome in pib_last_qoq.index and pd.notna(pib_last_qoq[nome]) else None
+            ),
+            "trimestre": data_trimestre(pib_last_q),
+            "fonte": "IBGE — SIDRA, tabela 1621; cálculo próprio sobre índice encadeado",
+        }
+
+    # Participações calculadas exclusivamente com os valores do último trimestre.
+    part_prod_ultimo = {}
+    if not val.empty and "Valor adicionado a preços básicos" in val.columns:
+        q = val.index.max()
+        denominador = val.loc[q, "Valor adicionado a preços básicos"]
+        if pd.notna(denominador) and denominador != 0:
+            for nome in PRODUCAO.values():
+                if nome != "Valor adicionado a preços básicos" and nome in val.columns:
+                    v = val.loc[q, nome]
+                    if pd.notna(v):
+                        part_prod_ultimo[nome] = round(float(v / denominador * 100), 4)
+
+    part_desp_ultimo = {}
+    if not val.empty and "PIB a preços de mercado" in val.columns:
+        q = val.index.max()
+        denominador = val.loc[q, "PIB a preços de mercado"]
+        if pd.notna(denominador) and denominador != 0:
+            for nome in DESPESAS.values():
+                if nome != "PIB a preços de mercado" and nome in val.columns:
+                    v = val.loc[q, nome]
+                    if pd.notna(v):
+                        part_desp_ultimo[nome] = round(float(v / denominador * 100), 4)
+
+    meta_valor = float(ipca_last["meta_pct"]) if pd.notna(ipca_last["meta_pct"]) else None
+    ipca_valor = float(ipca_last["ipca_geral_12m"])
+    payload["resumo"] = {
+        "gerado_em_utc": payload["gerado_em_utc"],
+        "ipca": {
+            "data": ipca_last_date.strftime("%Y-%m-%d"),
+            "ipca_12m_pct": round(ipca_valor, 4),
+            "meta_pct": round(meta_valor, 4) if meta_valor is not None else None,
+            "desvio_meta_pontos_percentuais": round(ipca_valor - meta_valor, 4) if meta_valor is not None else None,
+            "componentes": ipca_comp_last,
+            "fonte": "Banco Central do Brasil — SGS, série 433 (IPCA) e séries 1635–1643 (grupos); meta: SGS 13521",
+        },
+        "selic": {
+            **(selic_last or {}),
+            "fonte": "Banco Central do Brasil — SGS, série 432 (Meta Selic definida pelo Copom)",
+        },
+        "desocupacao": {
+            **(des_last or {}),
+            "fonte": "IPEA — Ipeadata, série PNADC12_TDESOC12 (PNAD Contínua, 14 anos ou mais)",
+        },
+        "dolar_comercial": {
+            **(cambio_last or {}),
+            "variacao_1_semana": variacao_desde(cambio_comercial, "valor", 7),
+            "variacao_1_mes": variacao_desde(cambio_comercial, "valor", 30),
+            "unidade": "R$/US$",
+            "fonte": "IPEA — Ipeadata, série GM366_ERV366 (câmbio comercial venda, média)",
+        },
+        "ibovespa": {
+            **(ibov_last or {}),
+            "variacao_1_semana": variacao_desde(ibovespa, "valor", 7),
+            "variacao_1_mes": variacao_desde(ibovespa, "valor", 30),
+            "unidade": "pontos",
+            "fonte": "IPEA — Ipeadata, série GM366_IBVSP366 (fechamento)",
+        },
+        "resultado_nominal_12m": {
+            **(nominal_last or {}),
+            "unidade": "R$ bilhões",
+            "fonte": "IPEA — Ipeadata, série BM12_NFSPNNAS12; sinal invertido conforme convenção do script",
+        },
+        "divida_bruta_governo_geral": {
+            **(divida_last or {}),
+            "unidade": "% do PIB",
+            "fonte": "Banco Central do Brasil — SGS, série 13762",
+        },
+        "resultado_primario_12m": {
+            **(primario_last or {}),
+            "unidade": "R$ bilhões",
+            "fonte": "IPEA — Ipeadata, série BM12_NFSPPNAS12; sinal invertido conforme convenção do script",
+        },
+        "pib_producao": {
+            "trimestre": data_trimestre(pib_last_q),
+            "variacoes": producao_variacoes,
+            "participacao_ultimo_trimestre_pct": part_prod_ultimo,
+            "fonte_participacao": "IBGE — SIDRA, tabela 6613, valores do trimestre; participação sobre valor adicionado a preços básicos",
+        },
+        "pib_despesas": {
+            "trimestre": data_trimestre(pib_last_q),
+            "variacoes": despesas_variacoes,
+            "participacao_ultimo_trimestre_pct": part_desp_ultimo,
+            "fonte_participacao": "IBGE — SIDRA, tabela 6613, valores do trimestre; participação sobre PIB a preços de mercado",
+        },
+        "metodologia_variacoes_pib": "São informadas a variação contra o trimestre imediatamente anterior (trimestral) e contra o mesmo trimestre do ano anterior (interanual), ambas calculadas sobre o índice encadeado da tabela 1621.",
+    }
+
+
+    # Estrutura tabular pronta para a camada visual (frontend).
+    tabela_resumo = []
+
+    def adicionar_linha(indicador, registro, unidade, fonte, data=None):
+        if registro is None:
+            return
+        tabela_resumo.append({
+            "indicador": indicador,
+            "resultado": registro.get("valor"),
+            "unidade": unidade,
+            "data": data or registro.get("data"),
+            "fonte": fonte,
+        })
+
+    adicionar_linha("IPCA — acumulado em 12 meses", {"valor": round(ipca_valor, 4)}, "%", payload["resumo"]["ipca"]["fonte"], ipca_last_date.strftime("%Y-%m-%d"))
+    adicionar_linha("Meta de inflação", {"valor": round(meta_valor, 4) if meta_valor is not None else None}, "%", "Banco Central do Brasil — SGS, série 13521", ipca_last_date.strftime("%Y-%m-%d"))
+    adicionar_linha("Desvio do IPCA em relação à meta", {"valor": round(ipca_valor - meta_valor, 4) if meta_valor is not None else None}, "p.p.", payload["resumo"]["ipca"]["fonte"], ipca_last_date.strftime("%Y-%m-%d"))
+    for nome, registro in ipca_comp_last.items():
+        adicionar_linha(f"IPCA — {nome}", {"valor": registro["valor_pct_12m"]}, "% em 12 meses", registro["fonte"], registro["data"])
+    adicionar_linha("Selic", selic_last, "% a.a.", payload["resumo"]["selic"]["fonte"])
+    adicionar_linha("Taxa de desocupação", des_last, "%", payload["resumo"]["desocupacao"]["fonte"])
+    adicionar_linha("Dólar comercial", cambio_last, "R$/US$", payload["resumo"]["dolar_comercial"]["fonte"])
+    adicionar_linha("Dólar — variação em 1 semana", {"valor": payload["resumo"]["dolar_comercial"]["variacao_1_semana"]["variacao_pct"], "data": cambio_last["data"]} if cambio_last and payload["resumo"]["dolar_comercial"]["variacao_1_semana"] else None, "%", payload["resumo"]["dolar_comercial"]["fonte"])
+    adicionar_linha("Dólar — variação em 1 mês", {"valor": payload["resumo"]["dolar_comercial"]["variacao_1_mes"]["variacao_pct"], "data": cambio_last["data"]} if cambio_last and payload["resumo"]["dolar_comercial"]["variacao_1_mes"] else None, "%", payload["resumo"]["dolar_comercial"]["fonte"])
+    adicionar_linha("Ibovespa", ibov_last, "pontos", payload["resumo"]["ibovespa"]["fonte"])
+    adicionar_linha("Ibovespa — variação em 1 semana", {"valor": payload["resumo"]["ibovespa"]["variacao_1_semana"]["variacao_pct"], "data": ibov_last["data"]} if ibov_last and payload["resumo"]["ibovespa"]["variacao_1_semana"] else None, "%", payload["resumo"]["ibovespa"]["fonte"])
+    adicionar_linha("Ibovespa — variação em 1 mês", {"valor": payload["resumo"]["ibovespa"]["variacao_1_mes"]["variacao_pct"], "data": ibov_last["data"]} if ibov_last and payload["resumo"]["ibovespa"]["variacao_1_mes"] else None, "%", payload["resumo"]["ibovespa"]["fonte"])
+    adicionar_linha("Resultado nominal acumulado em 12 meses", nominal_last, "R$ bilhões", payload["resumo"]["resultado_nominal_12m"]["fonte"])
+    adicionar_linha("Dívida bruta do governo geral", divida_last, "% do PIB", payload["resumo"]["divida_bruta_governo_geral"]["fonte"])
+    adicionar_linha("Resultado primário acumulado em 12 meses", primario_last, "R$ bilhões", payload["resumo"]["resultado_primario_12m"]["fonte"])
+
+    for nome, registro in producao_variacoes.items():
+        adicionar_linha(f"PIB — produção — {nome} (interanual)", {"valor": registro["variacao_interanual_pct"]}, "%", registro["fonte"], registro["trimestre"])
+        adicionar_linha(f"PIB — produção — {nome} (trimestral)", {"valor": registro["variacao_trimestral_pct"]}, "%", registro["fonte"], registro["trimestre"])
+    for nome, registro in despesas_variacoes.items():
+        adicionar_linha(f"PIB — despesas — {nome} (interanual)", {"valor": registro["variacao_interanual_pct"]}, "%", registro["fonte"], registro["trimestre"])
+        adicionar_linha(f"PIB — despesas — {nome} (trimestral)", {"valor": registro["variacao_trimestral_pct"]}, "%", registro["fonte"], registro["trimestre"])
+
+    payload["resumo"]["tabela"] = tabela_resumo
+    payload["resumo"]["graficos_pizza"] = {
+        "producao": {
+            "trimestre": data_trimestre(pib_last_q),
+            "dados": [{"componente": k, "participacao_pct": v} for k, v in part_prod_ultimo.items()],
+        },
+        "despesas": {
+            "trimestre": data_trimestre(pib_last_q),
+            "dados": [{"componente": k, "participacao_pct": v} for k, v in part_desp_ultimo.items()],
         },
     }
 
