@@ -415,20 +415,26 @@ function renderizarPizzaResumo(divId, titulo, bloco, unidadeBase) {
 
   const labels = bloco.dados.map(x => x.componente);
   const valores = bloco.dados.map(x => Number(x.participacao_pct));
+  // Paleta qualitativa consistente para as fatias de composição do PIB.
+  const paleta = ["#2878B5", "#2CA02C", "#FF7F0E", "#9467BD", "#17A2B8", "#D64B4B", "#8C9A3C", "#7F7F7F"];
   Plotly.newPlot(divId, [{
     type: "pie",
     labels,
     values: valores,
-    text: valores.map(v => `${numeroBR(v, 1)}%`),
-    textinfo: "label+text",
-    textposition: "outside",
-    automargin: true,
+    texttemplate: "%{percent:.1%}",
+    textinfo: "percent",
+    textposition: "inside",
+    insidetextorientation: "auto",
+    textfont: { size: 14, color: "#ffffff", family: "Arial, sans-serif" },
+    marker: { colors: labels.map((_, i) => paleta[i % paleta.length]), line: { color: "#ffffff", width: 1.5 } },
     sort: false,
     hovertemplate: "%{label}<br>%{value:.2f}%<extra></extra>"
   }], {
-    title: { text: `${titulo}<br><sup>${escaparHTML(bloco.trimestre || "")} — participação sobre ${unidadeBase}</sup>`, x: 0.02, xanchor: "left" },
-    showlegend: false,
-    margin: { t: 76, b: 35, l: 25, r: 25 },
+    title: { text: `${titulo}<br><sup>${escaparHTML(bloco.trimestre || "")} — participação sobre ${unidadeBase}</sup>`, x: 0.02, xanchor: "left", font: { size: 19 } },
+    showlegend: true,
+    legend: { orientation: "h", x: 0.5, xanchor: "center", y: -0.16, yanchor: "top", font: { size: 11 }, itemwidth: 90 },
+    margin: { t: 76, b: 95, l: 18, r: 18 },
+    height: 390,
     uniformtext: { minsize: 10, mode: "hide" }
   }, { responsive: true, displaylogo: false });
 }
@@ -447,8 +453,24 @@ function renderizarResumo(resumo) {
     return `${numeroBR(l.resultado, casas)}${unidade ? ` ${escaparHTML(unidade)}` : ""}`;
   };
   const fonteData = (l) => l ? `<small>${dataBR(l.data)} · ${escaparHTML(l.fonte || "Fonte não informada")}</small>` : "<small>Não disponível</small>";
+  const estiloIndicador = (indicador) => {
+    const n = normalizar(indicador);
+    if (n.includes("selic")) return "background:#ed1c2a;color:#fff";
+    if (n.includes("desocupacao") || n.includes("desemprego")) return "background:#75c96b;color:#103b19";
+    if (n.includes("dolar") || n.includes("cambio")) {
+      if (n.includes("1 semana") || n.includes("seman")) return "background:#0d47a1;color:#fff";
+      if (n.includes("1 mes") || n.includes("mens")) return "background:#64b5f6;color:#082b4c";
+      return "background:#1976d2;color:#fff";
+    }
+    if (n.includes("ibovespa") || n.includes("ibov")) {
+      if (n.includes("1 semana") || n.includes("seman")) return "background:#e65100;color:#fff";
+      if (n.includes("1 mes") || n.includes("mens")) return "background:#ffb74d;color:#4a2500";
+      return "background:#ef6c00;color:#fff";
+    }
+    return "background:#536477;color:#fff";
+  };
   const cartaoIndicador = (l, classe = "") => l ? `
-    <article class="qr-indicador ${classe}">
+    <article class="qr-indicador ${classe}" style="${estiloIndicador(l.indicador)}">
       <div class="qr-indicador-titulo">${escaparHTML(l.indicador)}</div>
       <div class="qr-indicador-valor">${formatarValor(l)}</div>
       ${fonteData(l)}
@@ -498,17 +520,15 @@ function renderizarResumo(resumo) {
       #quadro_resumo .qr-inferior { display:grid; grid-template-columns:minmax(220px,.9fr) minmax(0,2.1fr); gap:24px; margin-top:28px; align-items:start; }
       #quadro_resumo .qr-indicadores { display:grid; gap:12px; }
       #quadro_resumo .qr-indicador { border-radius:15px; padding:12px 15px; color:#fff; background:#ed1c2a; box-shadow:0 3px 10px rgba(0,0,0,.08); }
-      #quadro_resumo .qr-indicador:nth-child(3n+2) { background:#20ad50; }
-      #quadro_resumo .qr-indicador:nth-child(3n) { background:#4148c9; }
       #quadro_resumo .qr-indicador-titulo { font-size:15px; font-weight:700; }
       #quadro_resumo .qr-indicador-valor { font-size:25px; line-height:1.15; font-weight:800; }
       #quadro_resumo .qr-indicador small { display:block; margin-top:5px; font-size:10px; line-height:1.35; opacity:.94; overflow-wrap:anywhere; }
       #quadro_resumo .qr-pizzas { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:18px; }
       #quadro_resumo .qr-pizza-card { min-width:0; text-align:center; }
-      #quadro_resumo .qr-pizza { width:100%; height:330px; min-width:0; }
+      #quadro_resumo .qr-pizza { width:100%; height:390px; min-width:0; }
       #quadro_resumo .qr-fonte-geral { margin-top:16px; font-size:10px; opacity:.7; }
       @media(max-width:850px) { #quadro_resumo .qr-topo { grid-template-columns:1fr; } #quadro_resumo .qr-inferior { grid-template-columns:1fr; } }
-      @media(max-width:560px) { #quadro_resumo .qr-pizzas { grid-template-columns:1fr; } #quadro_resumo .qr-pizza { height:310px; } }
+      @media(max-width:560px) { #quadro_resumo .qr-pizzas { grid-template-columns:1fr; } #quadro_resumo .qr-pizza { height:370px; } }
     </style>
     <h3 class="qr-painel-titulo">Painel-resumo da economia brasileira</h3>
     <div class="qr-topo">
