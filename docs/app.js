@@ -378,6 +378,128 @@ function renderizarPibColunas(pib) {
   );
 }
 
+
+// -----------------------------------------------------------------------------
+// QUADRO-RESUMO: tabela de indicadores + pizzas do PIB.
+// Requer o objeto "resumo" produzido pelo Python e a biblioteca Plotly já carregada.
+// No HTML, basta incluir:
+// <section class="card"><div id="quadro_resumo" class="chart"></div></section>
+// -----------------------------------------------------------------------------
+function escaparHTML(valor) {
+  return String(valor ?? "").replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  }[c]));
+}
+
+function numeroBR(valor, casas = 2) {
+  if (valor === null || valor === undefined || valor === "" || !Number.isFinite(Number(valor))) {
+    return "—";
+  }
+  return Number(valor).toLocaleString("pt-BR", {
+    minimumFractionDigits: casas,
+    maximumFractionDigits: casas
+  });
+}
+
+function dataBR(valor) {
+  if (!valor) return "—";
+  // Preserva datas ISO e trimestres já formatados (ex.: 2025T4).
+  const s = String(valor);
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : escaparHTML(s);
+}
+
+function renderizarPizzaResumo(divId, titulo, bloco, unidadeBase) {
+  const el = document.getElementById(divId);
+  if (!el || !bloco || !Array.isArray(bloco.dados) || !bloco.dados.length) return;
+
+  const labels = bloco.dados.map(x => x.componente);
+  const valores = bloco.dados.map(x => Number(x.participacao_pct));
+  Plotly.newPlot(divId, [{
+    type: "pie",
+    labels,
+    values: valores,
+    text: valores.map(v => `${numeroBR(v, 1)}%`),
+    textinfo: "label+text",
+    textposition: "outside",
+    automargin: true,
+    sort: false,
+    hovertemplate: "%{label}<br>%{value:.2f}%<extra></extra>"
+  }], {
+    title: { text: `${titulo}<br><sup>${escaparHTML(bloco.trimestre || "")} — participação sobre ${unidadeBase}</sup>`, x: 0.02, xanchor: "left" },
+    showlegend: false,
+    margin: { t: 76, b: 35, l: 25, r: 25 },
+    uniformtext: { minsize: 10, mode: "hide" }
+  }, { responsive: true, displaylogo: false });
+}
+
+function renderizarResumo(resumo) {
+  const host = document.getElementById("quadro_resumo");
+  if (!host || !resumo) return;
+
+  const linhas = Array.isArray(resumo.tabela) ? resumo.tabela : [];
+  const tabelaHTML = linhas.map(l => `
+    <tr>
+      <td>${escaparHTML(l.indicador)}</td>
+      <td class="qr-num">${numeroBR(l.resultado, 2)} ${escaparHTML(l.unidade || "")}</td>
+      <td>${dataBR(l.data)}</td>
+      <td class="qr-fonte">${escaparHTML(l.fonte || "—")}</td>
+    </tr>
+  `).join("");
+
+  host.innerHTML = `
+    <style>
+      #quadro_resumo .qr-wrap { width:100%; }
+      #quadro_resumo .qr-tabela-wrap { width:100%; overflow-x:auto; }
+      #quadro_resumo table { width:100%; border-collapse:collapse; font-size:13px; }
+      #quadro_resumo th, #quadro_resumo td { padding:9px 10px; border-bottom:1px solid rgba(127,127,127,.22); text-align:left; vertical-align:top; }
+      #quadro_resumo th { font-weight:700; white-space:nowrap; }
+      #quadro_resumo .qr-num { font-variant-numeric:tabular-nums; white-space:nowrap; font-weight:600; }
+      #quadro_resumo .qr-fonte { min-width:220px; font-size:11px; opacity:.78; }
+      #quadro_resumo .qr-graficos { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:16px; margin-top:22px; }
+      #quadro_resumo .qr-pizza { min-width:0; min-height:340px; }
+      #quadro_resumo .qr-subtitulo { margin:22px 0 10px; font-size:1.05rem; font-weight:700; }
+      #quadro_resumo .qr-atualizacao { font-size:11px; opacity:.7; margin-top:12px; }
+      @media (max-width:600px) {
+        #quadro_resumo table { font-size:12px; }
+        #quadro_resumo th, #quadro_resumo td { padding:7px 8px; }
+        #quadro_resumo .qr-pizza { min-height:390px; }
+      }
+    </style>
+    <div class="qr-wrap">
+      <h3>Resumo dos indicadores econômicos</h3>
+      <div class="qr-tabela-wrap">
+        <table>
+          <thead><tr>
+            <th>Indicador</th><th>Último resultado</th><th>Data / período</th><th>Fonte</th>
+          </tr></thead>
+          <tbody>${tabelaHTML || '<tr><td colspan="4">Não há dados de resumo no JSON.</td></tr>'}</tbody>
+        </table>
+      </div>
+      <div class="qr-subtitulo">Composição do PIB — último trimestre disponível</div>
+      <div class="qr-graficos">
+        <div id="quadro_resumo_pizza_producao" class="qr-pizza"></div>
+        <div id="quadro_resumo_pizza_despesas" class="qr-pizza"></div>
+      </div>
+      <div class="qr-atualizacao">Dados gerados em: ${escaparHTML(resumo.gerado_em_utc || "—")}. As datas indicam o período de referência de cada série.</div>
+    </div>
+  `;
+
+  const pizzas = resumo.graficos_pizza || {};
+  renderizarPizzaResumo(
+    "quadro_resumo_pizza_producao",
+    "Ótica da produção",
+    pizzas.producao,
+    "valor adicionado a preços básicos"
+  );
+  renderizarPizzaResumo(
+    "quadro_resumo_pizza_despesas",
+    "Ótica das despesas",
+    pizzas.despesas,
+    "PIB a preços de mercado"
+  );
+}
+
 function renderizarTodos(modo = "linha") {
   if (!DADOS_CACHE) return;
   const d = DADOS_CACHE;
@@ -511,6 +633,7 @@ function renderizarTodos(modo = "linha") {
   renderizarPibColunas(d.pib);
  // 6. grafico das estatisticas fiscais, cambio e ibovespa
   renderizarNovosTemas(d.novos_temas, cfg, modo);  
+  renderizarResumo(d.resumo);
 
 }
 
