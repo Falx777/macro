@@ -413,29 +413,58 @@ function renderizarPizzaResumo(divId, titulo, bloco, unidadeBase) {
   const el = document.getElementById(divId);
   if (!el || !bloco || !Array.isArray(bloco.dados) || !bloco.dados.length) return;
 
-  const labels = bloco.dados.map(x => x.componente);
-  const valores = bloco.dados.map(x => Number(x.participacao_pct));
-  // Paleta qualitativa consistente para as fatias de composição do PIB.
+  const dados = bloco.dados
+    .map(x => ({
+      label: String(x.componente ?? "Componente"),
+      value: Number(x.participacao_pct)
+    }))
+    .filter(x => Number.isFinite(x.value) && x.value > 0);
+  if (!dados.length) return;
+
+  const labels = dados.map(x => x.label);
+  const valores = dados.map(x => x.value);
   const paleta = ["#2878B5", "#2CA02C", "#FF7F0E", "#9467BD", "#17A2B8", "#D64B4B", "#8C9A3C", "#7F7F7F"];
+
   Plotly.newPlot(divId, [{
     type: "pie",
     labels,
     values: valores,
-    texttemplate: "%{value:.2f}%",
-    textinfo: "text",
+    // O rótulo dentro da fatia usa a mesma métrica visual da pizza.
+    // O valor original (% do PIB) fica explícito no tooltip.
+    texttemplate: "%{percent}",
+    textinfo: "none",
     textposition: "inside",
     insidetextorientation: "auto",
-    textfont: { size: 14, color: "#ffffff", family: "Arial, sans-serif" },
-    marker: { colors: labels.map((_, i) => paleta[i % paleta.length]), line: { color: "#ffffff", width: 1.5 } },
+    textfont: { size: 13, color: "#ffffff", family: "Arial, sans-serif" },
+    marker: {
+      colors: labels.map((_, i) => paleta[i % paleta.length]),
+      line: { color: "#ffffff", width: 1.5 }
+    },
     sort: false,
-    hovertemplate: "%{label}<br>Participação: %{value:.2f}%<extra></extra>"
+    direction: "clockwise",
+    domain: { x: [0.08, 0.92], y: [0.34, 1] },
+    hovertemplate:
+      "%{label}<br>Participação informada: %{value:.2f}% do PIB" +
+      "<br>Fatia neste gráfico: %{percent}<extra></extra>"
   }], {
-    title: { text: `${titulo}<br><sup>${escaparHTML(bloco.trimestre || "")} — participação sobre ${unidadeBase}</sup>`, x: 0.02, xanchor: "left", font: { size: 19 } },
+    autosize: true,
+    title: {
+      text: `${titulo}<br><sup>${escaparHTML(bloco.trimestre || "")} — participação sobre ${unidadeBase}</sup>`,
+      x: 0.03, xanchor: "left", y: 0.98, yanchor: "top",
+      font: { size: 17 }
+    },
     showlegend: true,
-    legend: { orientation: "h", x: 0.5, xanchor: "center", y: -0.16, yanchor: "top", font: { size: 11 }, itemwidth: 90 },
-    margin: { t: 76, b: 95, l: 18, r: 18 },
-    height: 390,
-    uniformtext: { minsize: 10, mode: "hide" }
+    // Legenda vertical abaixo da pizza: evita corte de nomes longos nas duas colunas.
+    legend: {
+      orientation: "v",
+      x: 0.5, xanchor: "center",
+      y: 0.015, yanchor: "bottom",
+      font: { size: 10 },
+      traceorder: "normal"
+    },
+    margin: { t: 72, b: 12, l: 12, r: 12 },
+    height: 500,
+    uniformtext: { minsize: 9, mode: "hide" }
   }, { responsive: true, displaylogo: false });
 }
 
@@ -562,12 +591,12 @@ function renderizarResumo(resumo, pibDados) {
       #quadro_resumo .qr-indicador-titulo { font-size:15px; font-weight:700; }
       #quadro_resumo .qr-indicador-valor { font-size:25px; line-height:1.15; font-weight:800; }
       #quadro_resumo .qr-indicador small { display:block; margin-top:5px; font-size:10px; line-height:1.35; opacity:.94; overflow-wrap:anywhere; }
-      #quadro_resumo .qr-pizzas { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:18px; }
+      #quadro_resumo .qr-pizzas { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:18px; align-items:start; width:100%; min-width:0; }
       #quadro_resumo .qr-pizza-card { min-width:0; text-align:center; }
-      #quadro_resumo .qr-pizza { width:100%; height:390px; min-width:0; }
+      #quadro_resumo .qr-pizza { width:100%; height:500px; min-width:0; overflow:visible; }
       #quadro_resumo .qr-fonte-geral { margin-top:16px; font-size:10px; opacity:.7; }
       @media(max-width:850px) { #quadro_resumo .qr-topo { grid-template-columns:1fr; } #quadro_resumo .qr-inferior { grid-template-columns:1fr; } }
-      @media(max-width:560px) { #quadro_resumo .qr-pizzas { grid-template-columns:1fr; } #quadro_resumo .qr-pizza { height:370px; } }
+      @media(max-width:560px) { #quadro_resumo .qr-pizzas { grid-template-columns:1fr; } #quadro_resumo .qr-pizza { height:500px; } }
     </style>
     <h3 class="qr-painel-titulo">Painel-resumo da economia brasileira</h3>
     <div class="qr-topo">
@@ -579,7 +608,7 @@ function renderizarResumo(resumo, pibDados) {
       <section class="qr-indicadores">${cardsDemais || '<div class="qr-vazio">Indicadores complementares não disponíveis</div>'}</section>
       <section class="qr-pizzas">
         <div class="qr-pizza-card"><div id="quadro_resumo_pizza_producao" class="qr-pizza"></div></div>
-        <div class="qr-pizza-card"><div id="quadro_resumo_barras_despesas" class="qr-pizza"></div></div>
+        <div class="qr-pizza-card"><div id="quadro_resumo_pizza_despesas" class="qr-pizza"></div></div>
       </section>
     </div>
     <div class="qr-fonte-geral">Atualização do arquivo: ${escaparHTML(resumo.gerado_em_utc || "—")}. As datas e fontes específicas aparecem em cada indicador.</div>
@@ -587,9 +616,7 @@ function renderizarResumo(resumo, pibDados) {
 
   const pizzas = resumo.graficos_pizza || {};
   renderizarPizzaResumo("quadro_resumo_pizza_producao", "Composição do PIB — produção", pizzas.producao, "valor adicionado a preços básicos");
-  // Despesas não devem ser exibidas em pizza: componentes incluem importações negativas e
-  // as participações não formam partes mutuamente exclusivas de um total de 100%.
-  renderizarBarrasDespesasResumo("quadro_resumo_barras_despesas", pibDados || {});
+  renderizarPizzaResumo("quadro_resumo_pizza_despesas", "Composição do PIB — despesas", pizzas.despesas, "PIB a preços de mercado");
 }
 
 function renderizarTodos(modo = "linha") {
