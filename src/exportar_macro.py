@@ -181,7 +181,7 @@ def parse_quarter(code):
     return pd.Period(year=int(s[:4]), quarter=int(s[-2:]), freq="Q")
 
 
-def sidra_series(table, variable, categories, start_year=2016):
+def sidra_series(table, variable, categories, start_year=2015):
     desc_url = f"https://apisidra.ibge.gov.br/DescritoresTabela/t/{table}"
     r_desc = SESSION.get(desc_url, timeout=60)
     r_desc.raise_for_status()
@@ -398,21 +398,50 @@ def main():
         },
     }
 
-    # 5. PIB trimestral real:
-    # - Tabela 1621, var 584: índice encadeado com ajuste sazonal -> variação trimestral (t / t-1)
-    # - Tabela 1620, var 583: índice encadeado sem ajuste sazonal -> variação interanual (t / t-4)
-    gdp1621_sa = sidra_series(1621, 584, ALL_CATS, start_year=2016)
-    gdp1620_nsa = sidra_series(1620, 583, ALL_CATS, start_year=2015)
+    # 5. PIB trimestral:
+    # - Crescimento real contra trimestre anterior (t / t-1): índice encadeado dessazonalizado (SIDRA 1621, var 584)
+    # - Crescimento real acumulado em 4 trimestres (últimos 4 tri vs 4 tri anteriores): índice encadeado sem ajuste sazonal (SIDRA 1620, var 583)
+    # - Participação: valores encadeados (SIDRA 6613, var 9319) sobre soma móvel de 4 trimestres
+    gdp1621_sa = sidra_series(1621, 584, ALL_CATS, start_year=2015)
+    gdp1620_nsa = sidra_series(1620, 583, ALL_CATS, start_year=2014)
+    gdp6613 = sidra_series(6613, 9319, ALL_CATS, start_year=2015)
 
     idx_sa = gdp1621_sa.pivot_table(index="trimestre", columns="categoria", values="valor", aggfunc="last").sort_index()
     qoq = (idx_sa.pct_change() * 100).dropna(how="all")
+    qoq = qoq[qoq.index.year >= 2016]
 
     idx_nsa = gdp1620_nsa.pivot_table(index="trimestre", columns="categoria", values="valor", aggfunc="last").sort_index()
-    yoy = ((idx_nsa / idx_nsa.shift(4) - 1) * 100).dropna(how="all")
+    roll4_nsa = idx_nsa.rolling(4, min_periods=4).sum()
+    yoy = (roll4_nsa.pct_change(4) * 100).dropna(how="all")
     yoy = yoy[yoy.index.year >= 2016]
 
     last_q = yoy.index.max()
     yoy_recent = yoy[yoy.index >= last_q - 3]
+
+    val = gdp6613.pivot_table(index="trimestre", columns="categoria", values="valor", aggfunc="last").sort_index()
+    roll4_val = val.rolling(4, min_periods=4).sum()
+
+    shares_prod = pd.DataFrame(index=roll4_val.index)
+    for name in PRODUCAO.values():
+        if (
+            name != "Valor adicionado a preços básicos"
+            and name in roll4_val
+            and "Valor adicionado a preços básicos" in roll4_val
+        ):
+            shares_prod[name] = 100 * roll4_val[name] / roll4_val["Valor adicionado a preços básicos"]
+    shares_prod = shares_prod.dropna(how="all")
+    shares_prod_recent = shares_prod[shares_prod.index >= shares_prod.index.max() - 3]
+
+    shares_desp = pd.DataFrame(index=roll4_val.index)
+    for name in DESPESAS.values():
+        if (
+            name != "PIB a preços de mercado"
+            and name in roll4_val
+            and "PIB a preços de mercado" in roll4_val
+        ):
+            shares_desp[name] = 100 * roll4_val[name] / roll4_val["PIB a preços de mercado"]
+    shares_desp = shares_desp.dropna(how="all")
+    shares_desp_recent = shares_desp[shares_desp.index >= shares_desp.index.max() - 3]
 
     prod_cols_sa = [c for c in PRODUCAO.values() if c in qoq.columns]
     desp_cols_sa = [c for c in DESPESAS.values() if c in qoq.columns]
@@ -429,6 +458,10 @@ def main():
         "yoy_recent_datas": pd.DatetimeIndex(yoy_recent.index.to_timestamp()).strftime("%Y-%m-%d").tolist(),
         "yoy_recent_producao": df_to_series_dict(yoy_recent[prod_cols_nsa]),
         "yoy_recent_despesas": df_to_series_dict(yoy_recent[desp_cols_nsa]),
+        "part_recent_prod_datas": pd.DatetimeIndex(shares_prod_recent.index.to_timestamp()).strftime("%Y-%m-%d").tolist(),
+        "part_recent_producao": df_to_series_dict(shares_prod_recent),
+        "part_recent_desp_datas": pd.DatetimeIndex(shares_desp_recent.index.to_timestamp()).strftime("%Y-%m-%d").tolist(),
+        "part_recent_despesas": df_to_series_dict(shares_desp_recent),
     }
 
     # 6. Câmbio diário, NFSP (nominal e primário), Dívida Bruta e Ibovespa
